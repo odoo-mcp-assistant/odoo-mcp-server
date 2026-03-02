@@ -1,0 +1,14 @@
+[project]
+name = "odoo-mcp-server"
+version = "0.1.0"
+
+dependencies = [
+    "fastmcp",
+    "starlette",
+    "uvicorn",
+    "odoorpc",
+    "python-dotenv",
+]
+
+[project.scripts]
+odoo-mcp-server = "main:main"
