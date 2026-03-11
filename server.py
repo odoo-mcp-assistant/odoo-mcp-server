@@ -62,8 +62,8 @@ def get_product_by_type(product_type: str) -> list:
     """
 
     products = odoo.env["product.product"].search_read(
-        [("detailed_type", "=", product_type)],
-        ["name", "list_price", "detailed_type"]
+        [("type", "=", product_type)],
+        ["name", "list_price", "type"]
     )
 
     return products
