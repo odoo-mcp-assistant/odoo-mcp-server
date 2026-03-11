@@ -1,7 +1,5 @@
 import os
-import json
 from pathlib import Path
-from datetime import datetime
 
 import uvicorn
 import odoorpc
@@ -17,72 +15,11 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 # Configuration
 # ============================================================
 
-BASE_DIR = Path(__file__).parent / "data"
-BASE_DIR.mkdir(exist_ok=True)
-
-PERMISSIONS_FILE = BASE_DIR / "server_permissions.json"
-AUDIT_FILE = BASE_DIR / "server_audit.log"
-
 ODOO_HOST = os.getenv("ODOO_HOST", "localhost")
 ODOO_PORT = int(os.getenv("ODOO_PORT", "8069"))
-ODOO_DB = os.getenv("ODOO_DB", "app_one")
+ODOO_DB = os.getenv("ODOO_DB", "pfe_v1")
 ODOO_USER = os.getenv("ODOO_USER", "admin")
 ODOO_PASSWORD = os.getenv("ODOO_PASSWORD", "admin")
-
-
-# ============================================================
-# Permission Layer
-# ============================================================
-
-def load_permissions():
-    if PERMISSIONS_FILE.exists():
-        return json.loads(PERMISSIONS_FILE.read_text())
-
-    default = {
-        "get_product_by_name": "allow",
-        "get_product_by_type": "allow",
-        "add_product": "ask",
-        "update_product": "ask",
-        "archive_product": "ask",
-        "search_partners": "allow",
-        "get_partner_details": "allow",
-        "create_partner": "ask",
-        "get_sale_orders": "allow",
-        "get_sale_order_details": "allow",
-        "create_sale_order": "ask",
-        "confirm_sale_order": "ask",
-        "get_invoices": "allow",
-        "get_invoice_details": "allow",
-        "create_invoice": "ask",
-        "confirm_invoice": "ask",
-        "get_stock_quantities": "allow",
-        "get_warehouses": "allow",
-        "get_stock_picking": "allow",
-        "get_leads": "allow",
-        "create_lead": "ask",
-        "update_lead_stage": "ask",
-        "get_purchase_orders": "allow",
-        "create_purchase_order": "ask",
-        "confirm_purchase_order": "ask",
-        "get_employees": "allow",
-        "get_employee_details": "allow",
-    }
-
-    PERMISSIONS_FILE.write_text(json.dumps(default, indent=2))
-    return default
-
-
-SERVER_PERMISSIONS = load_permissions()
-
-
-def check_permission(tool_name: str):
-    return SERVER_PERMISSIONS.get(tool_name, "allow")
-
-
-def log_audit(tool: str, decision: str):
-    entry = f"{datetime.now().isoformat()} | {tool} | {decision}\n"
-    with open(AUDIT_FILE, "a") as f:
-        f.write(entry)
 
 
 # ============================================================
@@ -101,7 +38,7 @@ mcp = FastMCP("odoo-mcp-server")
 
 
 # ============================================================
-# Secure Tools
+# Product Tools
 # ============================================================
 
 @mcp.tool()
@@ -109,12 +46,6 @@ def get_product_by_name(name: str) -> list:
     """
     Get products by name (case-insensitive search).
     """
-
-    if check_permission("get_product_by_name") != "allow":
-        log_audit("get_product_by_name", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    log_audit("get_product_by_name", "ALLOWED")
 
     products = odoo.env["product.product"].search_read(
         [("name", "ilike", name)],
@@ -130,12 +61,6 @@ def get_product_by_type(product_type: str) -> list:
     Get products by type: product, consu, or service.
     """
 
-    if check_permission("get_product_by_type") != "allow":
-        log_audit("get_product_by_type", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    log_audit("get_product_by_type", "ALLOWED")
-
     products = odoo.env["product.product"].search_read(
         [("detailed_type", "=", product_type)],
         ["name", "list_price", "detailed_type"]
@@ -148,24 +73,11 @@ def get_product_by_type(product_type: str) -> list:
 def add_product(name: str, price: float, product_type: str = "consu") -> dict:
     """
     Add a new product to the Odoo database.
-    Requires permission before execution.
-
     Args:
         name: The name of the product.
         price: The list/sale price of the product.
         product_type: The type of product — 'consu' (consumable), 'service', or 'product' (storable). Defaults to 'consu'.
     """
-
-    permission = check_permission("add_product")
-
-    if permission == "deny":
-        log_audit("add_product", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    if permission == "ask":
-        log_audit("add_product", "ASK — deferred to client")
-
-    log_audit("add_product", "ALLOWED")
 
     try:
         product_id = odoo.env["product.product"].create({
@@ -182,7 +94,6 @@ def add_product(name: str, price: float, product_type: str = "consu") -> dict:
             "type": product_type,
         }
     except Exception as e:
-        log_audit("add_product", f"ERROR: {e}")
         return {"error": str(e)}
 
 
@@ -197,17 +108,6 @@ def update_product(product_id: int, name: str = None, price: float = None, produ
         price: New list/sale price (optional).
         product_type: New product type — 'consu', 'service', or 'product' (optional).
     """
-
-    permission = check_permission("update_product")
-
-    if permission == "deny":
-        log_audit("update_product", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    if permission == "ask":
-        log_audit("update_product", "ASK — deferred to client")
-
-    log_audit("update_product", "ALLOWED")
 
     try:
         vals = {}
@@ -225,7 +125,6 @@ def update_product(product_id: int, name: str = None, price: float = None, produ
 
         return {"success": True, "product_id": product_id, "updated_fields": list(vals.keys())}
     except Exception as e:
-        log_audit("update_product", f"ERROR: {e}")
         return {"error": str(e)}
 
 
@@ -239,23 +138,11 @@ def archive_product(product_id: int, archive: bool = True) -> dict:
         archive: True to archive (deactivate), False to unarchive (reactivate). Defaults to True.
     """
 
-    permission = check_permission("archive_product")
-
-    if permission == "deny":
-        log_audit("archive_product", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    if permission == "ask":
-        log_audit("archive_product", "ASK — deferred to client")
-
-    log_audit("archive_product", "ALLOWED")
-
     try:
         odoo.env["product.product"].write(product_id, {"active": not archive})
         action = "archived" if archive else "unarchived"
         return {"success": True, "product_id": product_id, "action": action}
     except Exception as e:
-        log_audit("archive_product", f"ERROR: {e}")
         return {"error": str(e)}
 
 
@@ -274,12 +161,6 @@ def search_partners(name: str = None, is_customer: bool = None, is_supplier: boo
         is_supplier: Filter by supplier flag (optional).
         limit: Maximum number of results to return. Defaults to 20.
     """
-
-    if check_permission("search_partners") != "allow":
-        log_audit("search_partners", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    log_audit("search_partners", "ALLOWED")
 
     domain = []
     if name:
@@ -306,12 +187,6 @@ def get_partner_details(partner_id: int) -> dict:
         partner_id: The ID of the partner to retrieve.
     """
 
-    if check_permission("get_partner_details") != "allow":
-        log_audit("get_partner_details", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    log_audit("get_partner_details", "ALLOWED")
-
     try:
         partners = odoo.env["res.partner"].search_read(
             [("id", "=", partner_id)],
@@ -326,7 +201,6 @@ def get_partner_details(partner_id: int) -> dict:
             return {"error": f"Partner with ID {partner_id} not found"}
         return partners[0]
     except Exception as e:
-        log_audit("get_partner_details", f"ERROR: {e}")
         return {"error": str(e)}
 
 
@@ -355,17 +229,6 @@ def create_partner(
         country_code: Two-letter country code, e.g. 'US', 'FR' (optional).
     """
 
-    permission = check_permission("create_partner")
-
-    if permission == "deny":
-        log_audit("create_partner", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    if permission == "ask":
-        log_audit("create_partner", "ASK — deferred to client")
-
-    log_audit("create_partner", "ALLOWED")
-
     try:
         vals = {"name": name, "is_company": is_company}
         if email:
@@ -388,7 +251,6 @@ def create_partner(
         partner_id = odoo.env["res.partner"].create(vals)
         return {"success": True, "partner_id": partner_id, "name": name}
     except Exception as e:
-        log_audit("create_partner", f"ERROR: {e}")
         return {"error": str(e)}
 
 
@@ -406,12 +268,6 @@ def get_sale_orders(state: str = None, partner_name: str = None, limit: int = 20
         partner_name: Filter by customer name (case-insensitive, optional).
         limit: Maximum number of results. Defaults to 20.
     """
-
-    if check_permission("get_sale_orders") != "allow":
-        log_audit("get_sale_orders", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    log_audit("get_sale_orders", "ALLOWED")
 
     domain = []
     if state:
@@ -436,12 +292,6 @@ def get_sale_order_details(order_id: int) -> dict:
     Args:
         order_id: The ID of the sale order.
     """
-
-    if check_permission("get_sale_order_details") != "allow":
-        log_audit("get_sale_order_details", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    log_audit("get_sale_order_details", "ALLOWED")
 
     try:
         orders = odoo.env["sale.order"].search_read(
@@ -469,7 +319,6 @@ def get_sale_order_details(order_id: int) -> dict:
 
         return order
     except Exception as e:
-        log_audit("get_sale_order_details", f"ERROR: {e}")
         return {"error": str(e)}
 
 
@@ -482,17 +331,6 @@ def create_sale_order(partner_id: int, order_lines: list) -> dict:
         partner_id: The ID of the customer.
         order_lines: A list of order line dicts, each with 'product_id' (int), 'quantity' (float), and optional 'price_unit' (float).
     """
-
-    permission = check_permission("create_sale_order")
-
-    if permission == "deny":
-        log_audit("create_sale_order", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    if permission == "ask":
-        log_audit("create_sale_order", "ASK — deferred to client")
-
-    log_audit("create_sale_order", "ALLOWED")
 
     try:
         lines = []
@@ -515,7 +353,6 @@ def create_sale_order(partner_id: int, order_lines: list) -> dict:
         )
         return {"success": True, "order_id": order_id, **order[0]}
     except Exception as e:
-        log_audit("create_sale_order", f"ERROR: {e}")
         return {"error": str(e)}
 
 
@@ -528,17 +365,6 @@ def confirm_sale_order(order_id: int) -> dict:
         order_id: The ID of the sale order to confirm.
     """
 
-    permission = check_permission("confirm_sale_order")
-
-    if permission == "deny":
-        log_audit("confirm_sale_order", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    if permission == "ask":
-        log_audit("confirm_sale_order", "ASK — deferred to client")
-
-    log_audit("confirm_sale_order", "ALLOWED")
-
     try:
         odoo.env["sale.order"].action_confirm([order_id])
         order = odoo.env["sale.order"].search_read(
@@ -546,7 +372,6 @@ def confirm_sale_order(order_id: int) -> dict:
         )
         return {"success": True, "order_id": order_id, **order[0]}
     except Exception as e:
-        log_audit("confirm_sale_order", f"ERROR: {e}")
         return {"error": str(e)}
 
 
@@ -565,12 +390,6 @@ def get_invoices(state: str = None, partner_name: str = None, move_type: str = "
         move_type: Type of accounting entry — 'out_invoice' (customer invoice), 'in_invoice' (vendor bill), 'out_refund' (credit note), 'in_refund' (debit note). Defaults to 'out_invoice'.
         limit: Maximum number of results. Defaults to 20.
     """
-
-    if check_permission("get_invoices") != "allow":
-        log_audit("get_invoices", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    log_audit("get_invoices", "ALLOWED")
 
     domain = [("move_type", "=", move_type)]
     if state:
@@ -595,12 +414,6 @@ def get_invoice_details(invoice_id: int) -> dict:
     Args:
         invoice_id: The ID of the invoice.
     """
-
-    if check_permission("get_invoice_details") != "allow":
-        log_audit("get_invoice_details", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    log_audit("get_invoice_details", "ALLOWED")
 
     try:
         invoices = odoo.env["account.move"].search_read(
@@ -628,7 +441,6 @@ def get_invoice_details(invoice_id: int) -> dict:
 
         return invoice
     except Exception as e:
-        log_audit("get_invoice_details", f"ERROR: {e}")
         return {"error": str(e)}
 
 
@@ -642,17 +454,6 @@ def create_invoice(partner_id: int, invoice_lines: list, move_type: str = "out_i
         invoice_lines: A list of line dicts, each with 'product_id' (int), 'quantity' (float), and optional 'price_unit' (float).
         move_type: Invoice type — 'out_invoice' (customer invoice), 'in_invoice' (vendor bill). Defaults to 'out_invoice'.
     """
-
-    permission = check_permission("create_invoice")
-
-    if permission == "deny":
-        log_audit("create_invoice", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    if permission == "ask":
-        log_audit("create_invoice", "ASK — deferred to client")
-
-    log_audit("create_invoice", "ALLOWED")
 
     try:
         lines = []
@@ -676,7 +477,6 @@ def create_invoice(partner_id: int, invoice_lines: list, move_type: str = "out_i
         )
         return {"success": True, "invoice_id": invoice_id, **inv[0]}
     except Exception as e:
-        log_audit("create_invoice", f"ERROR: {e}")
         return {"error": str(e)}
 
 
@@ -689,17 +489,6 @@ def confirm_invoice(invoice_id: int) -> dict:
         invoice_id: The ID of the draft invoice to confirm.
     """
 
-    permission = check_permission("confirm_invoice")
-
-    if permission == "deny":
-        log_audit("confirm_invoice", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    if permission == "ask":
-        log_audit("confirm_invoice", "ASK — deferred to client")
-
-    log_audit("confirm_invoice", "ALLOWED")
-
     try:
         odoo.env["account.move"].action_post([invoice_id])
         inv = odoo.env["account.move"].search_read(
@@ -707,7 +496,6 @@ def confirm_invoice(invoice_id: int) -> dict:
         )
         return {"success": True, "invoice_id": invoice_id, **inv[0]}
     except Exception as e:
-        log_audit("confirm_invoice", f"ERROR: {e}")
         return {"error": str(e)}
 
 
@@ -725,12 +513,6 @@ def get_stock_quantities(product_name: str = None, warehouse_name: str = None, l
         warehouse_name: Filter by warehouse name (optional).
         limit: Maximum number of results. Defaults to 50.
     """
-
-    if check_permission("get_stock_quantities") != "allow":
-        log_audit("get_stock_quantities", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    log_audit("get_stock_quantities", "ALLOWED")
 
     domain = [("location_id.usage", "=", "internal")]
     if product_name:
@@ -752,12 +534,6 @@ def get_warehouses() -> list:
     List all warehouses configured in Odoo.
     """
 
-    if check_permission("get_warehouses") != "allow":
-        log_audit("get_warehouses", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    log_audit("get_warehouses", "ALLOWED")
-
     warehouses = odoo.env["stock.warehouse"].search_read(
         [],
         ["name", "code", "partner_id", "lot_stock_id"],
@@ -775,12 +551,6 @@ def get_stock_picking(state: str = None, picking_type: str = None, limit: int = 
         picking_type: Filter by operation type name, e.g. 'Delivery Orders', 'Receipts' (optional).
         limit: Maximum number of results. Defaults to 20.
     """
-
-    if check_permission("get_stock_picking") != "allow":
-        log_audit("get_stock_picking", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    log_audit("get_stock_picking", "ALLOWED")
 
     domain = []
     if state:
@@ -812,12 +582,6 @@ def get_leads(stage_name: str = None, partner_name: str = None, lead_type: str =
         lead_type: Filter by type — 'lead' or 'opportunity' (optional).
         limit: Maximum number of results. Defaults to 20.
     """
-
-    if check_permission("get_leads") != "allow":
-        log_audit("get_leads", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    log_audit("get_leads", "ALLOWED")
 
     domain = []
     if stage_name:
@@ -861,17 +625,6 @@ def create_lead(
         lead_type: 'lead' or 'opportunity'. Defaults to 'opportunity'.
     """
 
-    permission = check_permission("create_lead")
-
-    if permission == "deny":
-        log_audit("create_lead", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    if permission == "ask":
-        log_audit("create_lead", "ASK — deferred to client")
-
-    log_audit("create_lead", "ALLOWED")
-
     try:
         vals = {
             "name": name,
@@ -888,7 +641,6 @@ def create_lead(
         lead_id = odoo.env["crm.lead"].create(vals)
         return {"success": True, "lead_id": lead_id, "name": name, "type": lead_type}
     except Exception as e:
-        log_audit("create_lead", f"ERROR: {e}")
         return {"error": str(e)}
 
 
@@ -902,17 +654,6 @@ def update_lead_stage(lead_id: int, stage_name: str) -> dict:
         stage_name: The name of the target stage, e.g. 'Qualified', 'Proposition', 'Won'.
     """
 
-    permission = check_permission("update_lead_stage")
-
-    if permission == "deny":
-        log_audit("update_lead_stage", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    if permission == "ask":
-        log_audit("update_lead_stage", "ASK — deferred to client")
-
-    log_audit("update_lead_stage", "ALLOWED")
-
     try:
         stages = odoo.env["crm.stage"].search_read(
             [("name", "ilike", stage_name)], ["id", "name"], limit=1
@@ -923,7 +664,6 @@ def update_lead_stage(lead_id: int, stage_name: str) -> dict:
         odoo.env["crm.lead"].write(lead_id, {"stage_id": stages[0]["id"]})
         return {"success": True, "lead_id": lead_id, "new_stage": stages[0]["name"]}
     except Exception as e:
-        log_audit("update_lead_stage", f"ERROR: {e}")
         return {"error": str(e)}
 
 
@@ -941,12 +681,6 @@ def get_purchase_orders(state: str = None, partner_name: str = None, limit: int 
         partner_name: Filter by supplier name (optional).
         limit: Maximum number of results. Defaults to 20.
     """
-
-    if check_permission("get_purchase_orders") != "allow":
-        log_audit("get_purchase_orders", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    log_audit("get_purchase_orders", "ALLOWED")
 
     domain = []
     if state:
@@ -973,17 +707,6 @@ def create_purchase_order(partner_id: int, order_lines: list) -> dict:
         order_lines: A list of line dicts, each with 'product_id' (int), 'quantity' (float), and optional 'price_unit' (float).
     """
 
-    permission = check_permission("create_purchase_order")
-
-    if permission == "deny":
-        log_audit("create_purchase_order", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    if permission == "ask":
-        log_audit("create_purchase_order", "ASK — deferred to client")
-
-    log_audit("create_purchase_order", "ALLOWED")
-
     try:
         lines = []
         for line in order_lines:
@@ -1005,7 +728,6 @@ def create_purchase_order(partner_id: int, order_lines: list) -> dict:
         )
         return {"success": True, "purchase_order_id": po_id, **po[0]}
     except Exception as e:
-        log_audit("create_purchase_order", f"ERROR: {e}")
         return {"error": str(e)}
 
 
@@ -1018,17 +740,6 @@ def confirm_purchase_order(order_id: int) -> dict:
         order_id: The ID of the purchase order to confirm.
     """
 
-    permission = check_permission("confirm_purchase_order")
-
-    if permission == "deny":
-        log_audit("confirm_purchase_order", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    if permission == "ask":
-        log_audit("confirm_purchase_order", "ASK — deferred to client")
-
-    log_audit("confirm_purchase_order", "ALLOWED")
-
     try:
         odoo.env["purchase.order"].button_confirm([order_id])
         po = odoo.env["purchase.order"].search_read(
@@ -1036,7 +747,6 @@ def confirm_purchase_order(order_id: int) -> dict:
         )
         return {"success": True, "purchase_order_id": order_id, **po[0]}
     except Exception as e:
-        log_audit("confirm_purchase_order", f"ERROR: {e}")
         return {"error": str(e)}
 
 
@@ -1054,12 +764,6 @@ def get_employees(name: str = None, department: str = None, limit: int = 50) -> 
         department: Filter by department name (optional).
         limit: Maximum number of results. Defaults to 50.
     """
-
-    if check_permission("get_employees") != "allow":
-        log_audit("get_employees", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    log_audit("get_employees", "ALLOWED")
 
     domain = []
     if name:
@@ -1087,12 +791,6 @@ def get_employee_details(employee_id: int) -> dict:
         employee_id: The ID of the employee.
     """
 
-    if check_permission("get_employee_details") != "allow":
-        log_audit("get_employee_details", "DENIED")
-        return {"error": "Permission denied by server policy"}
-
-    log_audit("get_employee_details", "ALLOWED")
-
     try:
         employees = odoo.env["hr.employee"].search_read(
             [("id", "=", employee_id)],
@@ -1107,7 +805,6 @@ def get_employee_details(employee_id: int) -> dict:
             return {"error": f"Employee with ID {employee_id} not found"}
         return employees[0]
     except Exception as e:
-        log_audit("get_employee_details", f"ERROR: {e}")
         return {"error": str(e)}
 
 
@@ -1124,5 +821,5 @@ app = mcp.streamable_http_app()
 
 if __name__ == "__main__":
     host = os.getenv("MCP_SERVER_HOST", "0.0.0.0")
-    port = int(os.getenv("MCP_SERVER_PORT", "8001"))
+    port = int(os.getenv("MCP_SERVER_PORT", "8010"))
     uvicorn.run(app, host=host, port=port)
