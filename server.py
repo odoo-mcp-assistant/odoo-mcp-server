@@ -110,6 +110,12 @@ def get_orders(partner_id: int) -> list:
         partner_id: The ID of the customer (user), already provided via the system prompt.
     """
 
+    # Guard: refuse null or zero ids
+    if not partner_id or partner_id <= 0:
+        return {
+            "error": "No authenticated user. Cannot retrieve orders for an anonymous visitor."
+        }
+
     try:
         orders = odoo.env["sale.order"].search_read(
             [("partner_id", "=", partner_id)],
