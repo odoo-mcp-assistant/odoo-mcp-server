@@ -102,19 +102,22 @@ def add_product(name: str, price: float, product_type: str = "consu") -> dict:
 # ============================================================
 
 @mcp.tool()
-def get_orders(partner_id: int) -> list:
+def get_orders(partner_id: int = None) -> list:
     """
     Get the most important information of sale orders for a given customer.
 
     Args:
-        partner_id: The ID of the customer (user), already provided via the system prompt.
+        partner_id: is OPTIONAL - LLM can omit it.
     """
 
-    # Guard: refuse null or zero ids
-    if not partner_id or partner_id <= 0:
-        return {
-            "error": "No authenticated user. Cannot retrieve orders for an anonymous visitor."
-        }
+    # Guard: refuse None
+    if partner_id == None:
+        return [{
+            "error": True,
+            "code": "AUTH_REQUIRED",
+            "message": "You need to log in to get orders",
+            "suggestion": "Please log in to your account first"
+        }]
 
     try:
         orders = odoo.env["sale.order"].search_read(
@@ -140,6 +143,156 @@ def get_orders(partner_id: int) -> list:
         return result
     except Exception as e:
         return {"error": str(e)}
+
+@mcp.tool()
+def create_order(product_lines: list, partner_id: int = None) -> dict:
+    """
+    Create a new sale order for a given customer with one or more product lines.
+
+    Args:
+        partner_id: is OPTIONAL - LLM can omit it.
+        product_lines: List of dicts, each with:
+                       - product_id (int): the product ID
+                       - quantity (float): quantity to order
+                       - price_unit (float, optional): unit price override
+    Example:
+        product_lines = [
+            {"product_id": 12, "quantity": 2},
+            {"product_id": 7,  "quantity": 1, "price_unit": 99.99}
+        ]
+    """
+    if partner_id == None:
+        return {
+            "error": True,
+            "code": "AUTH_REQUIRED",
+            "message": "You need to log in to get orders",
+            "suggestion": "Please log in to your account first"
+        }
+
+    try:
+        # Create the order header
+        order_id = odoo.env["sale.order"].create({
+            "partner_id": partner_id,
+        })
+
+        # Add order lines
+        for line in product_lines:
+            product_id = line.get("product_id")
+            quantity   = line.get("quantity", 1)
+            price_unit = line.get("price_unit")
+
+            if not product_id:
+                continue
+
+            line_vals = {
+                "order_id":          order_id,
+                "product_id":        product_id,
+                "product_uom_qty":   quantity,
+            }
+            if price_unit is not None:
+                line_vals["price_unit"] = price_unit
+
+            odoo.env["sale.order.line"].create(line_vals)
+
+        # Read back the created order to return useful info
+        order = odoo.env["sale.order"].read(
+            [order_id],
+            ["name", "state", "amount_total", "partner_id"]
+        )[0]
+
+        return {"success": True, "order": order}
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def confirm_order(order_name: str, partner_id: int = None) -> dict:
+    """
+    Confirm a sale order (moves it from draft/quotation to confirmed/sale).
+
+    Args:
+        order_name: The order reference name e.g. 'S00001'.
+        partner_id: The owner of the order.
+    """
+    try:
+        order_id = odoo.env["sale.order"].search([("name", "=", order_name)])
+
+        if not order_id:
+            return {
+                "error": f"Order '{order_name}' not found."
+            }
+        
+        order = odoo.env["sale.order"].browse(order_id)
+
+        if order.partner_id.id != partner_id:
+            return {
+                "error": "User dont own this order. Cannot confirm order that doesnt belong to the user."
+            }
+        
+        if order.state not in ("draft", "sent"):
+            return {
+                "error": f"Order '{order_name}' cannot be confirmed. Current state: {order.state}."
+            }
+
+        order.action_confirm()
+
+        return {
+            "success": True,
+            "order_name": order_name,
+            "new_state": "sale",
+            "message": f"Order {order_name} has been confirmed successfully.",
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def cancel_order(order_name: str, partner_id: int = None) -> dict:
+    """
+    Cancel a sale order.
+
+    Args:
+        order_name: The order reference name e.g. 'S00001'.
+        partner_id: The owner of the order.
+    """
+    try:
+        order_id = odoo.env["sale.order"].search([("name", "=", order_name)])
+
+        if not order_id:
+            return {
+                "error": f"Order '{order_name}' not found."
+            }
+
+        order = odoo.env["sale.order"].browse(order_id)
+
+        if order.partner_id.id != partner_id:
+            return {
+                "error": "User dont own this order. Cannot confirm order that doesnt belong to the user."
+            }
+
+        if order.state == "cancel":
+            return {
+                "error": f"Order '{order_name}' is already cancelled."
+            }
+
+        if order.state not in ("draft", "sent", "sale"):
+            return {
+                "error": f"Order '{order_name}' cannot be cancelled. Current state: {order.state}."
+            }
+
+        order.action_cancel()
+
+        return {
+            "success": True,
+            "order_name": order_name,
+            "new_state": "cancel",
+            "message": f"Order {order_name} has been cancelled successfully.",
+        }
+
+    except Exception as e:
+        return {"error": str(e)}    
 
 
 # ============================================================
