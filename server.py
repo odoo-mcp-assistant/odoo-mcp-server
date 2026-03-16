@@ -7,6 +7,8 @@ from dotenv import load_dotenv
 
 from mcp.server.fastmcp import FastMCP
 
+from typing import Optional
+
 # Load environment variables from .env file at project root
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
@@ -102,12 +104,10 @@ def add_product(name: str, price: float, product_type: str = "consu") -> dict:
 # ============================================================
 
 @mcp.tool()
-def get_orders(partner_id: int = None) -> list:
+def get_orders(partner_id: Optional[int] = None) -> list:
     """
-    Get the most important information of sale orders for a given customer.
-
-    Args:
-        partner_id: is OPTIONAL - LLM can omit it.
+    Get sale orders for the current authenticated customer.
+    IMPORTANT: Always pass partner_id as null. It is injected automatically by the system. Never fill it yourself.
     """
 
     # Guard: refuse None
@@ -145,12 +145,12 @@ def get_orders(partner_id: int = None) -> list:
         return {"error": str(e)}
 
 @mcp.tool()
-def create_order(product_lines: list, partner_id: int = None) -> dict:
+def create_order(product_lines: list, partner_id: Optional[int] = None) -> dict:
     """
-    Create a new sale order for a given customer with one or more product lines.
+    Create a new sale order for the current authenticated customer.
+    IMPORTANT: Always pass partner_id as null. It is injected automatically by the system. Never fill it yourself.
 
     Args:
-        partner_id: is OPTIONAL - LLM can omit it.
         product_lines: List of dicts, each with:
                        - product_id (int): the product ID
                        - quantity (float): quantity to order
@@ -207,16 +207,16 @@ def create_order(product_lines: list, partner_id: int = None) -> dict:
 
 
 @mcp.tool()
-def confirm_order(order_name: str, partner_id: int = None) -> dict:
+def confirm_order(order_name: str, partner_id: Optional[int] = None) -> dict:
     """
     Confirm a sale order (moves it from draft/quotation to confirmed/sale).
+    IMPORTANT: Always pass partner_id as null. It is injected automatically by the system. Never fill it yourself.
 
     Args:
         order_name: The order reference name e.g. 'S00001'.
-        partner_id: The owner of the order.
     """
     try:
-        order_id = odoo.env["sale.order"].search([("name", "=", order_name)])
+        order_id = odoo.env["sale.order"].search([("name", "=", order_name), ("partner_id", "=", partner_id)])
 
         if not order_id:
             return {
@@ -224,11 +224,6 @@ def confirm_order(order_name: str, partner_id: int = None) -> dict:
             }
         
         order = odoo.env["sale.order"].browse(order_id)
-
-        if order.partner_id.id != partner_id:
-            return {
-                "error": "User dont own this order. Cannot confirm order that doesnt belong to the user."
-            }
         
         if order.state not in ("draft", "sent"):
             return {
@@ -249,16 +244,16 @@ def confirm_order(order_name: str, partner_id: int = None) -> dict:
 
 
 @mcp.tool()
-def cancel_order(order_name: str, partner_id: int = None) -> dict:
+def cancel_order(order_name: str, partner_id: Optional[int] = None) -> dict:
     """
     Cancel a sale order.
+    IMPORTANT: Always pass partner_id as null. It is injected automatically by the system. Never fill it yourself.
 
     Args:
         order_name: The order reference name e.g. 'S00001'.
-        partner_id: The owner of the order.
     """
     try:
-        order_id = odoo.env["sale.order"].search([("name", "=", order_name)])
+        order_id = odoo.env["sale.order"].search([("name", "=", order_name), ("partner_id", "=", partner_id)])
 
         if not order_id:
             return {
@@ -266,11 +261,6 @@ def cancel_order(order_name: str, partner_id: int = None) -> dict:
             }
 
         order = odoo.env["sale.order"].browse(order_id)
-
-        if order.partner_id.id != partner_id:
-            return {
-                "error": "User dont own this order. Cannot confirm order that doesnt belong to the user."
-            }
 
         if order.state == "cancel":
             return {
