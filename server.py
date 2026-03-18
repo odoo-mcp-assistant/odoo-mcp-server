@@ -284,6 +284,110 @@ def cancel_order(order_name: str, partner_id: Optional[int] = None) -> dict:
     except Exception as e:
         return {"error": str(e)}    
 
+@mcp.tool()
+def get_products_by_price_range(min_price: float, max_price: float) -> list:
+    """
+    Search products within a price range.
+
+    Args:
+        min_price: Minimum price (inclusive).
+        max_price: Maximum price (inclusive).
+    """
+    try:
+        products = odoo.env["product.product"].search_read(
+            [
+                ("list_price", ">=", min_price),
+                ("list_price", "<=", max_price),
+                ("sale_ok", "=", True),
+                ("is_published", "=", True),
+            ],
+            ["name", "list_price", "categ_id"]
+        )
+        return products
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def get_product_details(name: str) -> dict:
+    """
+    Get full details of a product by name including price, description, and stock availability.
+
+    Args:
+        name: The exact or partial product name to search for.
+    """
+    try:
+        products = odoo.env["product.product"].search_read(
+            [("name", "ilike", name), ("sale_ok", "=", True), ("is_published", "=", True)],
+            ["name", "list_price", "categ_id", "description_sale",
+             "qty_available", "virtual_available", "uom_id"],
+            limit=1
+        )
+        if not products:
+            return {"error": f"Product '{name}' not found."}
+        return products[0]
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def get_order_details(order_name: str, partner_id: Optional[int] = None) -> dict:
+    """
+    Get full details of a specific order by its reference name.
+    IMPORTANT: Always pass partner_id as null. It is injected automatically by the system. Never fill it yourself.
+
+    Args:
+        order_name: The order reference e.g. 'S00001'.
+    """
+    if partner_id is None:
+        return {
+            "error": True,
+            "code": "AUTH_REQUIRED",
+            "message": "You need to log in to view order details.",
+        }
+    try:
+        orders = odoo.env["sale.order"].search_read(
+            [("name", "=", order_name), ("partner_id", "=", partner_id)],
+            ["name", "date_order", "state", "amount_total",
+             "currency_id", "order_line", "note"],
+        )
+        if not orders:
+            return {"error": f"Order '{order_name}' not found."}
+
+        order = orders[0]
+        line_ids = order.pop("order_line", [])
+        if line_ids:
+            order["lines"] = odoo.env["sale.order.line"].search_read(
+                [("id", "in", line_ids)],
+                ["product_id", "product_uom_qty", "price_unit", "price_subtotal"],
+            )
+        return order
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def get_my_profile(partner_id: Optional[int] = None) -> dict:
+    """
+    Get the current authenticated customer profile including name, email, phone, and address.
+    IMPORTANT: Always pass partner_id as null. It is injected automatically by the system. Never fill it yourself.
+    """
+    if partner_id is None:
+        return {
+            "error": True,
+            "code": "AUTH_REQUIRED",
+            "message": "You need to log in to view your profile.",
+        }
+    try:
+        partners = odoo.env["res.partner"].search_read(
+            [("id", "=", partner_id)],
+            ["name", "email", "phone", "street", "city", "zip", "country_id"]
+        )
+        if not partners:
+            return {"error": "Profile not found."}
+        return partners[0]
+    except Exception as e:
+        return {"error": str(e)}
 
 # ============================================================
 # Streamable HTTP App
