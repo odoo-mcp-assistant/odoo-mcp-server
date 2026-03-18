@@ -152,20 +152,20 @@ def create_order(product_lines: list, partner_id: Optional[int] = None) -> dict:
 
     Args:
         product_lines: List of dicts, each with:
-                       - product_id (int): the product ID
+                       - product_name (str): the product name to search for
                        - quantity (float): quantity to order
                        - price_unit (float, optional): unit price override
     Example:
         product_lines = [
-            {"product_id": 12, "quantity": 2},
-            {"product_id": 7,  "quantity": 1, "price_unit": 99.99}
+            {"product_name": "TV Samsung", "quantity": 2},
+            {"product_name": "Washing Machine", "quantity": 1, "price_unit": 99.99}
         ]
     """
-    if partner_id == None:
+    if partner_id is None:
         return {
             "error": True,
             "code": "AUTH_REQUIRED",
-            "message": "You need to log in to get orders",
+            "message": "You need to log in to create an order",
             "suggestion": "Please log in to your account first"
         }
 
@@ -177,24 +177,39 @@ def create_order(product_lines: list, partner_id: Optional[int] = None) -> dict:
 
         # Add order lines
         for line in product_lines:
-            product_id = line.get("product_id")
-            quantity   = line.get("quantity", 1)
-            price_unit = line.get("price_unit")
+            product_name = line.get("product_name")
+            quantity     = line.get("quantity", 1)
+            price_unit   = line.get("price_unit")
 
-            if not product_id:
+            if not product_name:
                 continue
 
+            # Search for the product by name
+            product_ids = odoo.env["product.product"].search(
+                [("name", "ilike", product_name)], limit=1
+            )
+
+            if not product_ids:
+                # Product not found — delete the empty order and return error
+                odoo.env["sale.order"].browse(order_id).action_cancel()
+                return {
+                    "error": True,
+                    "message": f"Product '{product_name}' not found. Order was not created."
+                }
+
+            product_id = product_ids[0]
+
             line_vals = {
-                "order_id":          order_id,
-                "product_id":        product_id,
-                "product_uom_qty":   quantity,
+                "order_id":        order_id,
+                "product_id":      product_id,
+                "product_uom_qty": quantity,
             }
             if price_unit is not None:
                 line_vals["price_unit"] = price_unit
 
             odoo.env["sale.order.line"].create(line_vals)
 
-        # Read back the created order to return useful info
+        # Read back the created order
         order = odoo.env["sale.order"].read(
             [order_id],
             ["name", "state", "amount_total", "partner_id"]
