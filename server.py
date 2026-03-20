@@ -405,6 +405,122 @@ def get_my_profile(partner_id: Optional[int] = None) -> dict:
         return {"error": str(e)}
 
 # ============================================================
+# Invoice Tools
+# ============================================================
+
+@mcp.tool()
+def get_invoices(partner_id: Optional[int] = None) -> list:
+    """
+    Get all invoices for the current authenticated customer.
+    IMPORTANT: Always pass partner_id as null. It is injected automatically by the system. Never fill it yourself.
+    """
+    if partner_id is None:
+        return [{
+            "error": True,
+            "code": "AUTH_REQUIRED",
+            "message": "You need to log in to view your invoices.",
+            "suggestion": "Please log in to your account first",
+        }]
+
+    try:
+        invoices = odoo.env["account.move"].search_read(
+            [
+                ("partner_id",  "=",  partner_id),
+                ("move_type",   "=",  "out_invoice"),
+                ("state",      "=", "posted"),
+            ],
+            ["name", "invoice_date", "invoice_date_due", "state",
+             "payment_state", "amount_untaxed", "amount_tax",
+             "amount_total", "amount_residual", "currency_id"],
+            order="invoice_date desc",
+        )
+        return invoices
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def get_invoice_details(invoice_name: str, partner_id: Optional[int] = None) -> dict:
+    """
+    Get full details of a specific invoice by its reference number, including all line items.
+    IMPORTANT: Always pass partner_id as null. It is injected automatically by the system. Never fill it yourself.
+
+    Args:
+        invoice_name: The invoice reference e.g. 'INV/2024/00001'.
+    """
+    if partner_id is None:
+        return {
+            "error": True,
+            "code": "AUTH_REQUIRED",
+            "message": "You need to log in to view invoice details.",
+        }
+
+    try:
+        invoices = odoo.env["account.move"].search_read(
+            [
+                ("name",       "=", invoice_name),
+                ("partner_id", "=", partner_id),
+                ("move_type",  "=", "out_invoice"),
+                ("state",      "=", "posted"),
+            ],
+            ["name", "invoice_date", "invoice_date_due", "state",
+             "payment_state", "amount_untaxed", "amount_tax",
+             "amount_total", "amount_residual", "currency_id",
+             "invoice_line_ids", "narration"],
+        )
+
+        if not invoices:
+            return {"error": f"Invoice '{invoice_name}' not found."}
+
+        invoice = invoices[0]
+        line_ids = invoice.pop("invoice_line_ids", [])
+
+        if line_ids:
+            invoice["lines"] = odoo.env["account.move.line"].search_read(
+                [
+                    ("id",          "in", line_ids),
+                    ("display_type", "=", "product"),
+                ],
+                ["name", "quantity", "price_unit", "price_subtotal", "tax_ids"],
+            )
+
+        return invoice
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def get_unpaid_invoices(partner_id: Optional[int] = None) -> list:
+    """
+    Get all unpaid or partially paid invoices for the current authenticated customer.
+    IMPORTANT: Always pass partner_id as null. It is injected automatically by the system. Never fill it yourself.
+    """
+    if partner_id is None:
+        return [{
+            "error": True,
+            "code": "AUTH_REQUIRED",
+            "message": "You need to log in to view your unpaid invoices.",
+            "suggestion": "Please log in to your account first",
+        }]
+
+    try:
+        invoices = odoo.env["account.move"].search_read(
+            [
+                ("partner_id",   "=",  partner_id),
+                ("move_type",    "=",  "out_invoice"),
+                ("state",        "=",  "posted"),
+                ("payment_state", "in", ["not_paid", "partial"]),
+            ],
+            ["name", "invoice_date", "invoice_date_due", "payment_state",
+             "amount_total", "amount_residual", "currency_id"],
+            order="invoice_date_due asc",
+        )
+        return invoices
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ============================================================
 # Streamable HTTP App
 # ============================================================
 
