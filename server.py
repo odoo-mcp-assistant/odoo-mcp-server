@@ -44,57 +44,181 @@ mcp = FastMCP("odoo-mcp-server")
 # ============================================================
 
 @mcp.tool()
-def get_product_by_name(name: str) -> list:
+def get_categories() -> list:
     """
-    Get products by name (case-insensitive search).
+    Get all available product categories on the website.
+    Use this when the customer asks what categories or types of products are available.
     """
-
-    products = odoo.env["product.product"].search_read(
-        [("name", "ilike", name)],
-        ["name", "list_price", "categ_id"]
-    )
-
-    return products
-
-
-@mcp.tool()
-def get_product_by_type(product_type: str) -> list:
-    """
-    Get products by type: product, consu, or service.
-    """
-
-    products = odoo.env["product.product"].search_read(
-        [("type", "=", product_type)],
-        ["name", "list_price", "type"]
-    )
-
-    return products
-
-
-@mcp.tool()
-def add_product(name: str, price: float, product_type: str = "consu") -> dict:
-    """
-    Add a new product to the Odoo database.
-    Args:
-        name: The name of the product.
-        price: The list/sale price of the product.
-        product_type: The type of product — 'consu' (consumable), 'service', or 'product' (storable). Defaults to 'consu'.
-    """
-
     try:
-        product_id = odoo.env["product.product"].create({
-            "name": name,
-            "list_price": price,
-            "type": product_type,
-        })
+        categories = odoo.env["product.public.category"].search_read(
+            [],
+            ["name", "parent_id", "sequence"],
+            order="sequence asc",
+        )
+        return categories
+    except Exception as e:
+        return {"error": str(e)}
+    
 
-        return {
-            "success": True,
-            "product_id": product_id,
-            "name": name,
-            "price": price,
-            "type": product_type,
-        }
+@mcp.tool()
+def search_products(query: str, category_name: Optional[str] = None) -> list:
+    """
+    Search published products by name or keyword, with an optional category filter.
+    Use this as the main product search tool for any customer query.
+    Replaces get_product_by_name — do not use that tool anymore.
+ 
+    Args:
+        query: The search keyword or product name.
+        category_name: Optional category to narrow results (use get_categories() to get valid names).
+    """
+    try:
+        domain = [
+            ("name", "ilike", query),
+            ("sale_ok", "=", True),
+            ("is_published", "=", True),
+        ]
+ 
+        if category_name:
+            cat_ids = odoo.env["product.public.category"].search(
+                [("name", "ilike", category_name)]
+            )
+            if cat_ids:
+                domain.append(("public_categ_ids", "in", cat_ids))
+ 
+        products = odoo.env["product.template"].search_read(
+            domain,
+            ["name", "list_price", "public_categ_ids", "description_sale"],
+            order="list_price asc",
+        )
+        return products
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def get_products_by_category(category_name: str, min_price: Optional[float] = None, max_price: Optional[float] = None) -> list:
+    """
+    Get published products belonging to a given category, with optional price filtering.
+    Always call get_categories() first to get the exact category name.
+ 
+    Args:
+        category_name: The category name to filter by (e.g. 'Laptops', 'TVs').
+        min_price: Optional minimum price filter.
+        max_price: Optional maximum price filter.
+    """
+    try:
+        # Resolve category id from name
+        cat_ids = odoo.env["product.public.category"].search(
+            [("name", "ilike", category_name)]
+        )
+        if not cat_ids:
+            return {"error": f"Category '{category_name}' not found. Call get_categories() to see available ones."}
+ 
+        domain = [
+            ("public_categ_ids", "in", cat_ids),
+            ("sale_ok", "=", True),
+            ("is_published", "=", True),
+        ]
+ 
+        if min_price is not None:
+            domain.append(("list_price", ">=", min_price))
+        if max_price is not None:
+            domain.append(("list_price", "<=", max_price))
+ 
+        products = odoo.env["product.template"].search_read(
+            domain,
+            ["name", "list_price", "public_categ_ids", "description_sale"],
+            order="list_price asc",
+        )
+        return products
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def get_products_by_price_range(min_price: float, max_price: float) -> list:
+    """
+    Search products within a price range.
+
+    Args:
+        min_price: Minimum price (inclusive).
+        max_price: Maximum price (inclusive).
+    """
+    try:
+        products = odoo.env["product.product"].search_read(
+            [
+                ("list_price", ">=", min_price),
+                ("list_price", "<=", max_price),
+                ("sale_ok", "=", True),
+                ("is_published", "=", True),
+            ],
+            ["name", "list_price", "categ_id"]
+        )
+        return products
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def get_product_details(name: str) -> dict:
+    """
+    Get full details of a product including price, description, stock, and all specs/attributes (RAM, storage, color, etc.).
+    Use this when the customer asks for product specs, variants, or detailed information.
+    This replaces the old get_product_details — always use this version.
+ 
+    Args:
+        name: The exact or partial product name.
+    """
+    try:
+        products = odoo.env["product.template"].search_read(
+            [
+                ("name", "ilike", name),
+                ("sale_ok", "=", True),
+                ("is_published", "=", True),
+            ],
+            [
+                "name", "list_price", "description_sale",
+                "public_categ_ids", "attribute_line_ids",
+                "qty_available", "virtual_available",
+            ],
+            limit=1,
+        )
+ 
+        if not products:
+            return {"error": f"Product '{name}' not found."}
+ 
+        product = products[0]
+ 
+        # Fetch attribute lines (specs: RAM, Storage, Color, etc.)
+        attr_line_ids = product.pop("attribute_line_ids", [])
+        specs = []
+ 
+        if attr_line_ids:
+            attr_lines = odoo.env["product.template.attribute.line"].search_read(
+                [("id", "in", attr_line_ids)],
+                ["attribute_id", "value_ids"],
+            )
+ 
+            for line in attr_lines:
+                attr_name = line["attribute_id"][1] if line.get("attribute_id") else "Unknown"
+                value_ids = line.get("value_ids", [])
+ 
+                values = []
+                if value_ids:
+                    value_records = odoo.env["product.attribute.value"].search_read(
+                        [("id", "in", value_ids)],
+                        ["name"],
+                    )
+                    values = [v["name"] for v in value_records]
+ 
+                specs.append({
+                    "attribute": attr_name,
+                    "values": values,
+                })
+ 
+        product["specs"] = specs
+        return product
+ 
     except Exception as e:
         return {"error": str(e)}
 
@@ -154,11 +278,10 @@ def create_order(product_lines: list, partner_id: Optional[int] = None) -> dict:
         product_lines: List of dicts, each with:
                        - product_name (str): the product name to search for
                        - quantity (float): quantity to order
-                       - price_unit (float, optional): unit price override
     Example:
         product_lines = [
             {"product_name": "TV Samsung", "quantity": 2},
-            {"product_name": "Washing Machine", "quantity": 1, "price_unit": 99.99}
+            {"product_name": "Washing Machine", "quantity": 1}
         ]
     """
     if partner_id is None:
@@ -179,7 +302,6 @@ def create_order(product_lines: list, partner_id: Optional[int] = None) -> dict:
         for line in product_lines:
             product_name = line.get("product_name")
             quantity     = line.get("quantity", 1)
-            price_unit   = line.get("price_unit")
 
             if not product_name:
                 continue
@@ -204,8 +326,6 @@ def create_order(product_lines: list, partner_id: Optional[int] = None) -> dict:
                 "product_id":      product_id,
                 "product_uom_qty": quantity,
             }
-            if price_unit is not None:
-                line_vals["price_unit"] = price_unit
 
             odoo.env["sale.order.line"].create(line_vals)
 
@@ -296,51 +416,6 @@ def cancel_order(order_name: str, partner_id: Optional[int] = None) -> dict:
             "message": f"Order {order_name} has been cancelled successfully.",
         }
 
-    except Exception as e:
-        return {"error": str(e)}    
-
-@mcp.tool()
-def get_products_by_price_range(min_price: float, max_price: float) -> list:
-    """
-    Search products within a price range.
-
-    Args:
-        min_price: Minimum price (inclusive).
-        max_price: Maximum price (inclusive).
-    """
-    try:
-        products = odoo.env["product.product"].search_read(
-            [
-                ("list_price", ">=", min_price),
-                ("list_price", "<=", max_price),
-                ("sale_ok", "=", True),
-                ("is_published", "=", True),
-            ],
-            ["name", "list_price", "categ_id"]
-        )
-        return products
-    except Exception as e:
-        return {"error": str(e)}
-
-
-@mcp.tool()
-def get_product_details(name: str) -> dict:
-    """
-    Get full details of a product by name including price, description, and stock availability.
-
-    Args:
-        name: The exact or partial product name to search for.
-    """
-    try:
-        products = odoo.env["product.product"].search_read(
-            [("name", "ilike", name), ("sale_ok", "=", True), ("is_published", "=", True)],
-            ["name", "list_price", "categ_id", "description_sale",
-             "qty_available", "virtual_available", "uom_id"],
-            limit=1
-        )
-        if not products:
-            return {"error": f"Product '{name}' not found."}
-        return products[0]
     except Exception as e:
         return {"error": str(e)}
 
@@ -519,6 +594,68 @@ def get_unpaid_invoices(partner_id: Optional[int] = None) -> list:
     except Exception as e:
         return {"error": str(e)}
 
+
+
+
+
+
+
+@mcp.tool()
+def check_stock(product_name: str) -> dict:
+    """
+    Check stock availability of a product.
+    """
+    product = odoo.env["product.product"].search(
+        [("name", "ilike", product_name)], limit=1
+    )
+
+    if not product:
+        return {"error": f"Product '{product_name}' not found."}
+
+    return {
+        "name": product.name,
+        "available_qty": product.qty_available,
+        "forecast_qty": product.virtual_available,
+        "in_stock": product.qty_available > 0
+    }
+
+
+
+
+@mcp.tool()
+def simulate_cart(product_lines: list) -> dict:
+    """
+    Simulate total price before creating an order.
+
+    Args:
+        product_lines: [{product_name, quantity}]
+    """
+    total = 0
+    details = []
+
+    for line in product_lines:
+        product = odoo.env["product.product"].search(
+            [("name", "ilike", line.get("product_name"))], limit=1
+        )
+
+        if not product:
+            return {"error": f"Product '{line.get('product_name')}' not found."}
+
+        qty = line.get("quantity", 1)
+        subtotal = product.list_price * qty
+        total += subtotal
+
+        details.append({
+            "product": product.name,
+            "quantity": qty,
+            "unit_price": product.list_price,
+            "subtotal": subtotal
+        })
+
+    return {
+        "total": total,
+        "lines": details
+    }
 
 # ============================================================
 # Streamable HTTP App
