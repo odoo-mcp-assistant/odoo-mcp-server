@@ -237,14 +237,12 @@ def get_orders(partner_id: Optional[int] = None) -> list:
     IMPORTANT: Always pass partner_id as null. It is injected automatically by the system. Never fill it yourself.
     """
 
-    # Guard: refuse None
-    if partner_id == None:
-        return [{
+    if partner_id is None:
+        return {
             "error": True,
             "code": "AUTH_REQUIRED",
-            "message": "You need to log in to get orders",
-            "suggestion": "Please log in to your account first"
-        }]
+            "message": "Authentication required. Please sign in to your account or verify your identity via email.",
+        }
 
     try:
         orders = odoo.env["sale.order"].search_read(
@@ -291,8 +289,7 @@ def create_order(product_lines: list, partner_id: Optional[int] = None) -> dict:
         return {
             "error": True,
             "code": "AUTH_REQUIRED",
-            "message": "You need to log in to create an order",
-            "suggestion": "Please log in to your account first"
+            "message": "Authentication required. Please sign in to your account or verify your identity via email.",
         }
 
     try:
@@ -353,6 +350,13 @@ def confirm_order(order_name: str, partner_id: Optional[int] = None) -> dict:
     Args:
         order_name: The order reference name e.g. 'S00001'.
     """
+    if partner_id is None:
+        return {
+            "error": True,
+            "code": "AUTH_REQUIRED",
+            "message": "Authentication required. Please sign in to your account or verify your identity via email.",
+        }
+
     try:
         order_id = odoo.env["sale.order"].search([("name", "=", order_name), ("partner_id", "=", partner_id)])
 
@@ -390,6 +394,13 @@ def cancel_order(order_name: str, partner_id: Optional[int] = None) -> dict:
     Args:
         order_name: The order reference name e.g. 'S00001'.
     """
+    if partner_id is None:
+        return {
+            "error": True,
+            "code": "AUTH_REQUIRED",
+            "message": "Authentication required. Please sign in to your account or verify your identity via email.",
+        }
+
     try:
         order_id = odoo.env["sale.order"].search([("name", "=", order_name), ("partner_id", "=", partner_id)])
 
@@ -436,7 +447,7 @@ def get_order_details(order_name: str, partner_id: Optional[int] = None) -> dict
         return {
             "error": True,
             "code": "AUTH_REQUIRED",
-            "message": "You need to log in to view order details.",
+            "message": "Authentication required. Please sign in to your account or verify your identity via email.",
         }
     try:
         orders = odoo.env["sale.order"].search_read(
@@ -469,7 +480,7 @@ def get_my_profile(partner_id: Optional[int] = None) -> dict:
         return {
             "error": True,
             "code": "AUTH_REQUIRED",
-            "message": "You need to log in to view your profile.",
+            "message": "Authentication required. Please sign in to your account or verify your identity via email.",
         }
     try:
         partners = odoo.env["res.partner"].search_read(
@@ -493,12 +504,11 @@ def get_invoices(partner_id: Optional[int] = None) -> list:
     IMPORTANT: Always pass partner_id as null. It is injected automatically by the system. Never fill it yourself.
     """
     if partner_id is None:
-        return [{
+        return {
             "error": True,
             "code": "AUTH_REQUIRED",
-            "message": "You need to log in to view your invoices.",
-            "suggestion": "Please log in to your account first",
-        }]
+            "message": "Authentication required. Please sign in to your account or verify your identity via email.",
+        }
 
     try:
         invoices = odoo.env["account.move"].search_read(
@@ -530,7 +540,7 @@ def get_invoice_details(invoice_name: str, partner_id: Optional[int] = None) -> 
         return {
             "error": True,
             "code": "AUTH_REQUIRED",
-            "message": "You need to log in to view invoice details.",
+            "message": "Authentication required. Please sign in to your account or verify your identity via email.",
         }
 
     try:
@@ -574,12 +584,11 @@ def get_unpaid_invoices(partner_id: Optional[int] = None) -> list:
     IMPORTANT: Always pass partner_id as null. It is injected automatically by the system. Never fill it yourself.
     """
     if partner_id is None:
-        return [{
+        return {
             "error": True,
             "code": "AUTH_REQUIRED",
-            "message": "You need to log in to view your unpaid invoices.",
-            "suggestion": "Please log in to your account first",
-        }]
+            "message": "Authentication required. Please sign in to your account or verify your identity via email.",
+        }
 
     try:
         invoices = odoo.env["account.move"].search_read(
