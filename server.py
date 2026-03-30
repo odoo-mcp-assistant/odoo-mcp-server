@@ -1,4 +1,7 @@
 import os
+import random
+import threading
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import uvicorn
@@ -656,6 +659,120 @@ def simulate_cart(product_lines: list) -> dict:
         "total": total,
         "lines": details
     }
+
+# ============================================================
+# Email OTP Verification Tools
+# ============================================================
+
+# In-memory OTP store: { email_lower -> {"code": str, "expires_at": datetime} }
+# Thread-safe via a simple lock — lightweight enough for chatbot traffic.
+_otp_store: dict = {}
+_otp_lock = threading.Lock()
+
+OTP_EXPIRY_MINUTES = 10
+
+
+@mcp.tool()
+def send_verification_email(email: str) -> dict:
+    """
+    Send a 6-digit OTP verification code to the user's email address.
+    Use this when an anonymous user wants to perform an action that requires
+    authentication (e.g. viewing orders, creating an order).
+    First ask the user for their email, then call this tool.
+
+    Args:
+        email: The user's email address to send the verification code to.
+    """
+    email = email.strip().lower()
+    if not email or "@" not in email:
+        return {"error": "Invalid email address."}
+
+    try:
+        code = str(random.randint(100000, 999999))
+        expires_at = datetime.utcnow() + timedelta(minutes=OTP_EXPIRY_MINUTES)
+
+        with _otp_lock:
+            _otp_store[email] = {"code": code, "expires_at": expires_at}
+
+        # Send via Odoo mail
+        mail_id = odoo.env["mail.mail"].create({
+            "subject": "Your verification code",
+            "email_to": email,
+            "body_html": (
+                f"<p>Hello,</p>"
+                f"<p>Your verification code is: "
+                f"<strong style='font-size:18px;letter-spacing:4px'>{code}</strong></p>"
+                f"<p>This code is valid for {OTP_EXPIRY_MINUTES} minutes.</p>"
+            ),
+            "auto_delete": True,
+        })
+        odoo.env["mail.mail"].send([mail_id])
+
+        return {
+            "success": True,
+            "message": f"A 6-digit verification code has been sent to {email}. Please ask the user to enter it.",
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def verify_email_otp(email: str, otp_code: str) -> dict:
+    """
+    Verify the 6-digit OTP code the user received by email.
+    If successful, the user's identity is confirmed and they can immediately
+    proceed with authentication-required actions.
+
+    Args:
+        email: The email address the code was sent to.
+        otp_code: The 6-digit code entered by the user.
+    """
+    email = email.strip().lower()
+    otp_code = otp_code.strip()
+
+    with _otp_lock:
+        entry = _otp_store.get(email)
+
+    if not entry:
+        return {"error": "No verification code was requested for this email. Please call send_verification_email first."}
+
+    if datetime.utcnow() > entry["expires_at"]:
+        with _otp_lock:
+            _otp_store.pop(email, None)
+        return {"error": "The code has expired. Please request a new one."}
+
+    if entry["code"] != otp_code:
+        return {"error": "Invalid code. Please try again."}
+
+    # Code is valid — consume it
+    with _otp_lock:
+        _otp_store.pop(email, None)
+
+    try:
+        # Find or create a res.partner for this email.
+        # Use raw integer IDs from search/create — never browse().id,
+        # which can return unexpected values in odoorpc.
+        partner_ids = odoo.env["res.partner"].search([("email", "=ilike", email)])
+        if partner_ids:
+            pid = partner_ids[0]
+        else:
+            pid = odoo.env["res.partner"].create({
+                "name": email.split("@")[0],
+                "email": email,
+            })
+
+        info = odoo.env["res.partner"].read([pid], ["name", "email"])[0]
+
+        return {
+            "success": True,
+            "partner_id": pid,
+            "name": info["name"],
+            "email": info["email"],
+            "message": "Verification successful! Identity confirmed. You can now proceed with the user's request.",
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
 
 # ============================================================
 # Streamable HTTP App
