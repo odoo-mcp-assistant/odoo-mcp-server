@@ -1,7 +1,7 @@
 import os
 import random
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import uvicorn
@@ -698,7 +698,7 @@ def send_verification_email(email: str) -> dict:
 
     try:
         code = str(random.randint(100000, 999999))
-        expires_at = datetime.utcnow() + timedelta(minutes=OTP_EXPIRY_MINUTES)
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=OTP_EXPIRY_MINUTES)
 
         with _otp_lock:
             _otp_store[email] = {"code": code, "expires_at": expires_at}
@@ -726,11 +726,12 @@ def send_verification_email(email: str) -> dict:
 
 
 @mcp.tool()
-def verify_email_otp(email: str, otp_code: str) -> dict:
+def verify_email_otp(email: str, otp_code: str, session_id: Optional[int] = None) -> dict:
     """
     Verify the 6-digit OTP code the user received by email.
     If successful, the user's identity is confirmed and they can immediately
     proceed with authentication-required actions.
+    IMPORTANT: Always pass session_id as null. It is injected automatically by the system. Never fill it yourself.
 
     Args:
         email: The email address the code was sent to.
@@ -745,7 +746,7 @@ def verify_email_otp(email: str, otp_code: str) -> dict:
     if not entry:
         return {"error": "No verification code was requested for this email. Please call send_verification_email first."}
 
-    if datetime.utcnow() > entry["expires_at"]:
+    if datetime.now(timezone.utc) > entry["expires_at"]:
         with _otp_lock:
             _otp_store.pop(email, None)
         return {"error": "The code has expired. Please request a new one."}
@@ -768,6 +769,13 @@ def verify_email_otp(email: str, otp_code: str) -> dict:
             pid = odoo.env["res.partner"].create({
                 "name": email.split("@")[0],
                 "email": email,
+            })
+        
+        if session_id:
+            session = odoo.env["mcp.chatbot.session"].browse(session_id)
+            session.write({
+                "partner_id": pid,
+                "last_activity": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
             })
 
         info = odoo.env["res.partner"].read([pid], ["name", "email"])[0]
