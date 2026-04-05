@@ -48,11 +48,7 @@ mcp = FastMCP("odoo-mcp-server")
 
 @mcp.tool()
 def get_categories() -> list:
-    """
-    Get all available product categories on the website.
-    Use this when the customer asks what categories or types of products are available.
-    Always call this before get_products_by_category to ensure you pass a valid category name.
-    """
+    """Get all product categories available on the website."""
     try:
         categories = odoo.env["product.public.category"].search_read(
             [],
@@ -66,15 +62,11 @@ def get_categories() -> list:
 
 @mcp.tool()
 def search_products(query: str, category_name: Optional[str] = None) -> list:
-    """
-    Search published products by name or keyword, with an optional category filter.
-    Use this as the main product search tool for any customer query.
-    Replaces get_product_by_name — do not use that tool anymore.
-    If results are found, present them with name and price. Suggest get_product_details for more info on a specific item.
- 
+    """Search products by name/keyword with optional category filter.
+
     Args:
-        query: The search keyword or product name.
-        category_name: Optional category to narrow results (use get_categories() to get valid names).
+        query: Search keyword or product name.
+        category_name: Optional category name to filter by.
     """
     try:
         domain = [
@@ -102,14 +94,12 @@ def search_products(query: str, category_name: Optional[str] = None) -> list:
 
 @mcp.tool()
 def get_products_by_category(category_name: str, min_price: Optional[float] = None, max_price: Optional[float] = None) -> list:
-    """
-    Get published products belonging to a given category, with optional price filtering.
-    Always call get_categories() first to get the exact category name.
- 
+    """Get products in a category with optional price range.
+
     Args:
-        category_name: The category name to filter by (e.g. 'Laptops', 'TVs').
-        min_price: Optional minimum price filter.
-        max_price: Optional maximum price filter.
+        category_name: Category name (e.g. 'TVs').
+        min_price: Optional minimum price.
+        max_price: Optional maximum price.
     """
     try:
         # Resolve category id from name
@@ -142,13 +132,11 @@ def get_products_by_category(category_name: str, min_price: Optional[float] = No
 
 @mcp.tool()
 def get_products_by_price_range(min_price: float, max_price: float) -> list:
-    """
-    Search published products within a price range.
-    Use this when the customer specifies a budget or asks for products under/over a certain price.
+    """Search products within a price range.
 
     Args:
-        min_price: Minimum price (inclusive).
-        max_price: Maximum price (inclusive).
+        min_price: Minimum price.
+        max_price: Maximum price.
     """
     try:
         products = odoo.env["product.product"].search_read(
@@ -167,13 +155,10 @@ def get_products_by_price_range(min_price: float, max_price: float) -> list:
 
 @mcp.tool()
 def get_product_details(name: str) -> dict:
-    """
-    Get full details of a product including price, description, stock, and all specs/attributes (RAM, storage, color, etc.).
-    Use this when the customer asks for product specs, variants, or detailed information about a specific product.
-    This replaces the old get_product_details — always use this version.
- 
+    """Get full product details: price, description, stock, and attributes/specs.
+
     Args:
-        name: The exact or partial product name.
+        name: Exact or partial product name.
     """
     try:
         products = odoo.env["product.template"].search_read(
@@ -235,11 +220,7 @@ def get_product_details(name: str) -> dict:
 
 @mcp.tool()
 def get_orders(partner_id: Optional[int] = None) -> list:
-    """
-    Get all sale orders for the current authenticated customer, sorted by most recent first.
-    IMPORTANT: Always pass partner_id as null. It is injected automatically by the system. Never fill it yourself.
-    Returns order reference, date, status, total amount, and line items.
-    """
+    """Get all sale orders for the customer. partner_id is auto-injected, always pass null."""
 
     if partner_id is None:
         return {
@@ -275,22 +256,10 @@ def get_orders(partner_id: Optional[int] = None) -> list:
 
 @mcp.tool()
 def create_order(product_lines: list, partner_id: Optional[int] = None) -> dict:
-    """
-    Create a new sale order (quotation) for the current authenticated customer.
-    IMPORTANT: Always pass partner_id as null. It is injected automatically by the system. Never fill it yourself.
-    IMPORTANT: After creating the order, DO NOT call confirm_order automatically.
-    Always present the order summary (items, quantities, total) to the user first,
-    then explicitly ask: "Would you like me to confirm this order?" and wait for their approval.
+    """Create a sale order. partner_id is auto-injected, always pass null.
 
     Args:
-        product_lines: List of dicts, each with:
-                       - product_name (str): the product name to search for
-                       - quantity (float): quantity to order
-    Example:
-        product_lines = [
-            {"product_name": "TV Samsung", "quantity": 2},
-            {"product_name": "Washing Machine", "quantity": 1}
-        ]
+        product_lines: List of {product_name: str, quantity: float}.
     """
     if partner_id is None:
         return {
@@ -342,16 +311,7 @@ def create_order(product_lines: list, partner_id: Optional[int] = None) -> dict:
             ["name", "state", "amount_total", "partner_id"]
         )[0]
 
-        return {
-            "success": True,
-            "order": order,
-            "suggestion": (
-                "Order created as a quotation. "
-                "Present the order summary to the user and ask: "
-                "'Would you like me to confirm this order?' "
-                "Only call confirm_order if the user explicitly agrees."
-            ),
-        }
+        return {"success": True, "order": order}
 
     except Exception as e:
         return {"error": str(e)}
@@ -359,14 +319,10 @@ def create_order(product_lines: list, partner_id: Optional[int] = None) -> dict:
 
 @mcp.tool()
 def confirm_order(order_name: str, partner_id: Optional[int] = None) -> dict:
-    """
-    Confirm a sale order (moves it from draft/quotation to confirmed/sale).
-    IMPORTANT: Always pass partner_id as null. It is injected automatically by the system. Never fill it yourself.
-    IMPORTANT: Never call this tool unless the user has explicitly asked to confirm the order.
-    Always ask for confirmation first if it has not been given.
+    """Confirm a sale order (draft → sale). partner_id is auto-injected, always pass null.
 
     Args:
-        order_name: The order reference name e.g. 'S00001'.
+        order_name: Order reference e.g. 'S00001'.
     """
     if partner_id is None:
         return {
@@ -405,16 +361,10 @@ def confirm_order(order_name: str, partner_id: Optional[int] = None) -> dict:
 
 @mcp.tool()
 def cancel_order(order_name: str, partner_id: Optional[int] = None) -> dict:
-    """
-    Cancel a sale order.
-    IMPORTANT: Always pass partner_id as null. It is injected automatically by the system. Never fill it yourself.
-    IMPORTANT: Never cancel an order without explicit user confirmation.
-    Before calling this tool, always inform the user which order will be cancelled
-    and ask: "Are you sure you want to cancel order {order_name}? This action cannot be undone."
-    Only proceed if the user clearly confirms.
+    """Cancel a sale order. partner_id is auto-injected, always pass null.
 
     Args:
-        order_name: The order reference name e.g. 'S00001'.
+        order_name: Order reference e.g. 'S00001'.
     """
     if partner_id is None:
         return {
@@ -458,13 +408,10 @@ def cancel_order(order_name: str, partner_id: Optional[int] = None) -> dict:
 
 @mcp.tool()
 def get_order_details(order_name: str, partner_id: Optional[int] = None) -> dict:
-    """
-    Get full details of a specific order by its reference name, including all line items.
-    Use this when the customer asks about a specific order (status, items, total, notes).
-    IMPORTANT: Always pass partner_id as null. It is injected automatically by the system. Never fill it yourself.
+    """Get full details of an order with line items. partner_id is auto-injected, always pass null.
 
     Args:
-        order_name: The order reference e.g. 'S00001'.
+        order_name: Order reference e.g. 'S00001'.
     """
     if partner_id is None:
         return {
@@ -495,10 +442,7 @@ def get_order_details(order_name: str, partner_id: Optional[int] = None) -> dict
 
 @mcp.tool()
 def get_my_profile(partner_id: Optional[int] = None) -> dict:
-    """
-    Get the current authenticated customer profile including name, email, phone, and address.
-    IMPORTANT: Always pass partner_id as null. It is injected automatically by the system. Never fill it yourself.
-    """
+    """Get customer profile (name, email, phone, address). partner_id is auto-injected, always pass null."""
     if partner_id is None:
         return {
             "error": True,
@@ -522,11 +466,7 @@ def get_my_profile(partner_id: Optional[int] = None) -> dict:
 
 @mcp.tool()
 def get_invoices(partner_id: Optional[int] = None) -> list:
-    """
-    Get all posted (finalized) invoices for the current authenticated customer, sorted by most recent first.
-    IMPORTANT: Always pass partner_id as null. It is injected automatically by the system. Never fill it yourself.
-    Use get_unpaid_invoices instead if the customer specifically asks about pending or due payments.
-    """
+    """Get all invoices for the customer. partner_id is auto-injected, always pass null."""
     if partner_id is None:
         return {
             "error": True,
@@ -553,12 +493,10 @@ def get_invoices(partner_id: Optional[int] = None) -> list:
 
 @mcp.tool()
 def get_invoice_details(invoice_name: str, partner_id: Optional[int] = None) -> dict:
-    """
-    Get full details of a specific invoice by its reference number, including all line items.
-    IMPORTANT: Always pass partner_id as null. It is injected automatically by the system. Never fill it yourself.
+    """Get invoice details with line items. partner_id is auto-injected, always pass null.
 
     Args:
-        invoice_name: The invoice reference e.g. 'INV/2024/00001'.
+        invoice_name: Invoice reference e.g. 'INV/2024/00001'.
     """
     if partner_id is None:
         return {
@@ -603,11 +541,7 @@ def get_invoice_details(invoice_name: str, partner_id: Optional[int] = None) -> 
 
 @mcp.tool()
 def get_unpaid_invoices(partner_id: Optional[int] = None) -> list:
-    """
-    Get all unpaid or partially paid invoices for the current authenticated customer, sorted by due date ascending.
-    Use this when the customer asks about pending payments, overdue invoices, or what they still owe.
-    IMPORTANT: Always pass partner_id as null. It is injected automatically by the system. Never fill it yourself.
-    """
+    """Get unpaid/partially paid invoices. partner_id is auto-injected, always pass null."""
     if partner_id is None:
         return {
             "error": True,
@@ -632,15 +566,14 @@ def get_unpaid_invoices(partner_id: Optional[int] = None) -> list:
         return {"error": str(e)}
 
 
+
+
+
+
+
 @mcp.tool()
 def check_stock(product_name: str) -> dict:
-    """
-    Check stock availability of a product by name.
-    Use this when the customer asks if a product is available, in stock, or how many units are left.
-
-    Args:
-        product_name: The exact or partial product name.
-    """
+    """Check stock availability of a product."""
     product = odoo.env["product.product"].search(
         [("name", "ilike", product_name)], limit=1
     )
@@ -656,15 +589,14 @@ def check_stock(product_name: str) -> dict:
     }
 
 
+
+
 @mcp.tool()
 def simulate_cart(product_lines: list) -> dict:
-    """
-    Simulate the total price of a cart before creating an order.
-    Use this when the customer wants to know the total cost before placing an order,
-    or when you want to show a price summary before calling create_order.
+    """Simulate total price before creating an order.
 
     Args:
-        product_lines: List of dicts with product_name (str) and quantity (int/float).
+        product_lines: List of {product_name: str, quantity: float}.
     """
     total = 0
     details = []
@@ -707,15 +639,10 @@ OTP_EXPIRY_MINUTES = 10
 
 @mcp.tool()
 def send_verification_email(email: str) -> dict:
-    """
-    Send a 6-digit OTP verification code to the user's email address.
-    Use this when an anonymous user wants to perform an action that requires
-    authentication (e.g. viewing orders, creating an order).
-    First ask the user for their email, then call this tool.
-    After calling this, ask the user to enter the code they received, then call verify_email_otp.
+    """Send a 6-digit OTP code to verify an anonymous user's email.
 
     Args:
-        email: The user's email address to send the verification code to.
+        email: User's email address.
     """
     email = email.strip().lower()
     if not email or "@" not in email:
@@ -752,15 +679,11 @@ def send_verification_email(email: str) -> dict:
 
 @mcp.tool()
 def verify_email_otp(email: str, otp_code: str, session_id: Optional[int] = None) -> dict:
-    """
-    Verify the 6-digit OTP code the user received by email.
-    If successful, the user's identity is confirmed and they can immediately
-    proceed with authentication-required actions.
-    IMPORTANT: Always pass session_id as null. It is injected automatically by the system. Never fill it yourself.
+    """Verify the 6-digit OTP code the user received by email. session_id is auto-injected, always pass null.
 
     Args:
-        email: The email address the code was sent to.
-        otp_code: The 6-digit code entered by the user.
+        email: Email the code was sent to.
+        otp_code: The 6-digit code.
     """
     email = email.strip().lower()
     otp_code = otp_code.strip()
