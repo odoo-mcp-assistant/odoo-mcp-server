@@ -1,5 +1,6 @@
 import os
 import random
+import time
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -43,30 +44,81 @@ mcp = FastMCP("odoo-mcp-server")
 
 
 # ============================================================
+# Simple In-Memory Cache
+# ============================================================
+
+CACHE_TTL = 300  # 5 minutes
+PAGE_SIZE = 5
+
+_cache: dict = {}
+_cache_lock = threading.Lock()
+
+
+def _get_cache(key: str):
+    with _cache_lock:
+        entry = _cache.get(key)
+        if entry and time.time() < entry["expires"]:
+            return entry["data"]
+    return None
+
+
+def _set_cache(key: str, data):
+    with _cache_lock:
+        _cache[key] = {"data": data, "expires": time.time() + CACHE_TTL}
+
+
+# ============================================================
 # Product Tools
 # ============================================================
 
 @mcp.tool()
-def get_categories() -> list:
-    """Get all product categories available on the website."""
+def get_catalogue_overview() -> dict:
+    """Get a compact overview of the entire product catalogue in a single call: categories with product counts and sample products. Use this for broad or exploratory questions like 'what do you sell?' instead of calling search_products multiple times."""
+    cached = _get_cache("catalogue_overview")
+    if cached is not None:
+        return cached
     try:
         categories = odoo.env["product.public.category"].search_read(
-            [],
-            ["name", "parent_id", "sequence"],
-            order="sequence asc",
+            [], ["name", "parent_id"], order="sequence asc",
         )
-        return categories
+
+        overview = []
+        for cat in categories:
+            domain = [
+                ("sale_ok", "=", True),
+                ("is_published", "=", True),
+                ("public_categ_ids", "in", [cat["id"]]),
+            ]
+            count = odoo.env["product.template"].search_count(domain)
+            if count == 0:
+                continue
+            sample = odoo.env["product.template"].search_read(
+                domain, ["name", "list_price"], limit=3,
+            )
+            overview.append({
+                "category": cat["name"],
+                "parent": cat["parent_id"][1] if cat["parent_id"] else None,
+                "product_count": count,
+                "sample_products": [{"name": p["name"], "price": p["list_price"]} for p in sample],
+            })
+
+        result = {"categories": overview}
+        _set_cache("catalogue_overview", result)
+        return result
     except Exception as e:
         return {"error": str(e)}
-    
+
 
 @mcp.tool()
-def search_products(query: str, category_name: Optional[str] = None) -> list:
-    """Search products by name/keyword with optional category filter.
+def search_products(query: str, category_name: Optional[str] = None, min_price: Optional[float] = None, max_price: Optional[float] = None, page: int = 1) -> dict:
+    """Search products by name/keyword with optional category and price filters (paginated, 5 per page).
 
     Args:
         query: Search keyword or product name.
         category_name: Optional category name to filter by.
+        min_price: Optional minimum price.
+        max_price: Optional maximum price.
+        page: Page number starting from 1 (default 1).
     """
     try:
         domain = [
@@ -74,81 +126,47 @@ def search_products(query: str, category_name: Optional[str] = None) -> list:
             ("sale_ok", "=", True),
             ("is_published", "=", True),
         ]
- 
+
         if category_name:
             cat_ids = odoo.env["product.public.category"].search(
                 [("name", "ilike", category_name)]
             )
             if cat_ids:
                 domain.append(("public_categ_ids", "in", cat_ids))
- 
-        products = odoo.env["product.template"].search_read(
-            domain,
-            ["name", "list_price", "public_categ_ids", "description_sale"],
-            order="list_price asc",
-        )
-        return products
-    except Exception as e:
-        return {"error": str(e)}
 
-
-@mcp.tool()
-def get_products_by_category(category_name: str, min_price: Optional[float] = None, max_price: Optional[float] = None) -> list:
-    """Get products in a category with optional price range.
-
-    Args:
-        category_name: Category name (e.g. 'TVs').
-        min_price: Optional minimum price.
-        max_price: Optional maximum price.
-    """
-    try:
-        # Resolve category id from name
-        cat_ids = odoo.env["product.public.category"].search(
-            [("name", "ilike", category_name)]
-        )
-        if not cat_ids:
-            return {"error": f"Category '{category_name}' not found. Call get_categories() to see available ones."}
- 
-        domain = [
-            ("public_categ_ids", "in", cat_ids),
-            ("sale_ok", "=", True),
-            ("is_published", "=", True),
-        ]
- 
         if min_price is not None:
             domain.append(("list_price", ">=", min_price))
         if max_price is not None:
             domain.append(("list_price", "<=", max_price))
- 
+
+        total_count = odoo.env["product.template"].search_count(domain)
+        total_pages = (total_count + PAGE_SIZE - 1) // PAGE_SIZE if total_count else 0
+
+        if page < 1 or (total_pages and page > total_pages):
+            return {"error": f"Invalid page {page}. Valid range: 1-{total_pages}."}
+
+        offset = (page - 1) * PAGE_SIZE
+
         products = odoo.env["product.template"].search_read(
             domain,
             ["name", "list_price", "public_categ_ids", "description_sale"],
             order="list_price asc",
+            limit=PAGE_SIZE,
+            offset=offset,
         )
-        return products
-    except Exception as e:
-        return {"error": str(e)}
 
+        returned = len(products)
+        hint = f"Showing {returned} of {total_count} products (page {page}/{total_pages})."
+        if page < total_pages:
+            hint += f" Call search_products with same arguments and page={page + 1} to get more."
 
-@mcp.tool()
-def get_products_by_price_range(min_price: float, max_price: float) -> list:
-    """Search products within a price range.
-
-    Args:
-        min_price: Minimum price.
-        max_price: Maximum price.
-    """
-    try:
-        products = odoo.env["product.product"].search_read(
-            [
-                ("list_price", ">=", min_price),
-                ("list_price", "<=", max_price),
-                ("sale_ok", "=", True),
-                ("is_published", "=", True),
-            ],
-            ["name", "list_price", "categ_id"]
-        )
-        return products
+        return {
+            "products": products,
+            "current_page": page,
+            "total_pages": total_pages,
+            "total_products": total_count,
+            "hint": hint,
+        }
     except Exception as e:
         return {"error": str(e)}
 
@@ -219,8 +237,12 @@ def get_product_details(name: str) -> dict:
 # ============================================================
 
 @mcp.tool()
-def get_orders(partner_id: Optional[int] = None) -> list:
-    """Get all sale orders for the customer. partner_id is auto-injected, always pass null."""
+def get_orders(page: int = 1, partner_id: Optional[int] = None) -> dict:
+    """Get sale orders for the customer (paginated, 5 per page). partner_id is auto-injected, always pass null.
+
+    Args:
+        page: Page number starting from 1 (default 1).
+    """
 
     if partner_id is None:
         return {
@@ -230,13 +252,24 @@ def get_orders(partner_id: Optional[int] = None) -> list:
         }
 
     try:
+        domain = [("partner_id", "=", partner_id)]
+        total_count = odoo.env["sale.order"].search_count(domain)
+        total_pages = (total_count + PAGE_SIZE - 1) // PAGE_SIZE if total_count else 0
+
+        if page < 1 or (total_pages and page > total_pages):
+            return {"error": f"Invalid page {page}. Valid range: 1-{total_pages}."}
+
+        offset = (page - 1) * PAGE_SIZE
+
         orders = odoo.env["sale.order"].search_read(
-            [("partner_id", "=", partner_id)],
+            domain,
             [
                 "name", "date_order", "state",
                 "amount_total", "currency_id", "order_line",
             ],
             order="date_order desc",
+            limit=PAGE_SIZE,
+            offset=offset,
         )
 
         result = []
@@ -250,7 +283,18 @@ def get_orders(partner_id: Optional[int] = None) -> list:
                 )
             result.append({**order, "lines": lines})
 
-        return result
+        returned = len(result)
+        hint = f"Showing {returned} of {total_count} orders (page {page}/{total_pages})."
+        if page < total_pages:
+            hint += f" Call get_orders with page={page + 1} to get more."
+
+        return {
+            "orders": result,
+            "current_page": page,
+            "total_pages": total_pages,
+            "total_orders": total_count,
+            "hint": hint,
+        }
     except Exception as e:
         return {"error": str(e)}
 
@@ -564,31 +608,6 @@ def get_unpaid_invoices(partner_id: Optional[int] = None) -> list:
         return invoices
     except Exception as e:
         return {"error": str(e)}
-
-
-
-
-
-
-
-@mcp.tool()
-def check_stock(product_name: str) -> dict:
-    """Check stock availability of a product."""
-    product = odoo.env["product.product"].search(
-        [("name", "ilike", product_name)], limit=1
-    )
-
-    if not product:
-        return {"error": f"Product '{product_name}' not found."}
-
-    return {
-        "name": product.name,
-        "available_qty": product.qty_available,
-        "forecast_qty": product.virtual_available,
-        "in_stock": product.qty_available > 0
-    }
-
-
 
 
 @mcp.tool()
