@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 
 from mcp.server.fastmcp import FastMCP
 
+from collections import defaultdict
 from typing import Optional
 
 # Load environment variables from .env file at project root
@@ -78,28 +79,34 @@ def get_catalogue_overview() -> dict:
     if cached is not None:
         return cached
     try:
+        # Fetch all categories and all published products in just 2 RPC calls
         categories = odoo.env["product.public.category"].search_read(
-            [], ["name", "parent_id"], order="sequence asc",
+            [], ["name"], order="sequence asc",
         )
+        cat_map = {cat["id"]: cat["name"] for cat in categories}
+
+        all_products = odoo.env["product.template"].search_read(
+            [("sale_ok", "=", True), ("is_published", "=", True)],
+            ["name", "list_price", "public_categ_ids"],
+        )
+
+        # Group products by category in Python
+        by_cat = defaultdict(list)
+        for p in all_products:
+            for cid in p.get("public_categ_ids", []):
+                if cid in cat_map:
+                    by_cat[cid].append({"name": p["name"], "price": p["list_price"]})
 
         overview = []
         for cat in categories:
-            domain = [
-                ("sale_ok", "=", True),
-                ("is_published", "=", True),
-                ("public_categ_ids", "in", [cat["id"]]),
-            ]
-            count = odoo.env["product.template"].search_count(domain)
-            if count == 0:
+            prods = by_cat.get(cat["id"], [])
+            if not prods:
                 continue
-            sample = odoo.env["product.template"].search_read(
-                domain, ["name", "list_price"], limit=3,
-            )
             overview.append({
                 "category": cat["name"],
-                "parent": cat["parent_id"][1] if cat["parent_id"] else None,
-                "product_count": count,
-                "sample_products": [{"name": p["name"], "price": p["list_price"]} for p in sample],
+                "product_count": len(prods),
+                "price_range": {"min": min(p["price"] for p in prods), "max": max(p["price"] for p in prods)},
+                "sample_products": prods[:3],
             })
 
         result = {"categories": overview}
@@ -155,6 +162,18 @@ def search_products(query: str, category_name: Optional[str] = None, min_price: 
             offset=offset,
         )
 
+        # Get the overall price range across ALL matching products (not just this page)
+        cheapest = odoo.env["product.template"].search_read(
+            domain, ["list_price"], order="list_price asc", limit=1,
+        )
+        most_expensive = odoo.env["product.template"].search_read(
+            domain, ["list_price"], order="list_price desc", limit=1,
+        )
+        price_range = {
+            "min": cheapest[0]["list_price"] if cheapest else None,
+            "max": most_expensive[0]["list_price"] if most_expensive else None,
+        }
+
         returned = len(products)
         hint = f"Showing {returned} of {total_count} products (page {page}/{total_pages})."
         if page < total_pages:
@@ -165,6 +184,7 @@ def search_products(query: str, category_name: Optional[str] = None, min_price: 
             "current_page": page,
             "total_pages": total_pages,
             "total_products": total_count,
+            "overall_price_range": price_range,
             "hint": hint,
         }
     except Exception as e:
@@ -611,38 +631,94 @@ def get_unpaid_invoices(partner_id: Optional[int] = None) -> list:
 
 
 @mcp.tool()
-def simulate_cart(product_lines: list) -> dict:
-    """Simulate total price before creating an order.
+def add_to_cart(product_lines: list, partner_id: Optional[int] = None) -> dict:
+    """Add products to the customer's cart (draft sale order). Creates a new cart if none exists. partner_id is auto-injected, always pass null.
 
     Args:
         product_lines: List of {product_name: str, quantity: float}.
     """
-    total = 0
-    details = []
+    if partner_id is None:
+        return {
+            "error": True,
+            "code": "AUTH_REQUIRED",
+            "message": "Authentication required. Please sign in to your account or verify your identity via email.",
+        }
 
-    for line in product_lines:
-        product = odoo.env["product.product"].search(
-            [("name", "ilike", line.get("product_name"))], limit=1
-        )
+    try:
+        # Find existing draft order (cart) or create one
+        cart_ids = odoo.env["sale.order"].search([
+            ("partner_id", "=", partner_id),
+            ("state", "=", "draft"),
+        ], order="create_date desc", limit=1)
 
-        if not product:
-            return {"error": f"Product '{line.get('product_name')}' not found."}
+        if cart_ids:
+            cart_id = cart_ids[0]
+        else:
+            cart_id = odoo.env["sale.order"].create({
+                "partner_id": partner_id,
+            })
 
-        qty = line.get("quantity", 1)
-        subtotal = product.list_price * qty
-        total += subtotal
+        added = []
+        for line in product_lines:
+            product_name = line.get("product_name")
+            quantity = line.get("quantity", 1)
 
-        details.append({
-            "product": product.name,
-            "quantity": qty,
-            "unit_price": product.list_price,
-            "subtotal": subtotal
-        })
+            if not product_name:
+                continue
 
-    return {
-        "total": total,
-        "lines": details
-    }
+            product_ids = odoo.env["product.product"].search(
+                [("name", "ilike", product_name)], limit=1
+            )
+
+            if not product_ids:
+                return {"error": f"Product '{product_name}' not found. Nothing was added."}
+
+            product_id = product_ids[0]
+
+            # Check if this product already exists in the cart
+            existing_line = odoo.env["sale.order.line"].search([
+                ("order_id", "=", cart_id),
+                ("product_id", "=", product_id),
+            ], limit=1)
+
+            if existing_line:
+                # Update quantity on existing line
+                old_qty = odoo.env["sale.order.line"].read(existing_line, ["product_uom_qty"])[0]["product_uom_qty"]
+                new_qty = old_qty + quantity
+                odoo.env["sale.order.line"].write(existing_line, {"product_uom_qty": new_qty})
+                added.append({"product": product_name, "quantity": new_qty, "note": "updated existing line"})
+            else:
+                odoo.env["sale.order.line"].create({
+                    "order_id": cart_id,
+                    "product_id": product_id,
+                    "product_uom_qty": quantity,
+                })
+                added.append({"product": product_name, "quantity": quantity})
+
+        # Read back cart summary
+        cart = odoo.env["sale.order"].read(
+            [cart_id],
+            ["name", "amount_total", "order_line"],
+        )[0]
+
+        line_ids = cart.pop("order_line", [])
+        lines = []
+        if line_ids:
+            lines = odoo.env["sale.order.line"].search_read(
+                [("id", "in", line_ids)],
+                ["product_id", "product_uom_qty", "price_unit", "price_subtotal"],
+            )
+
+        return {
+            "success": True,
+            "cart_order": cart["name"],
+            "added": added,
+            "cart_total": cart["amount_total"],
+            "cart_lines": lines,
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
 
 # ============================================================
 # Email OTP Verification Tools
