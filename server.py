@@ -117,22 +117,24 @@ def get_catalogue_overview() -> dict:
 
 
 @mcp.tool()
-def search_products(query: str, category_name: Optional[str] = None, min_price: Optional[float] = None, max_price: Optional[float] = None, page: int = 1) -> dict:
-    """Search products by name/keyword with optional category and price filters (paginated, 5 per page).
+def search_products(name_contains: Optional[str] = None, category_name: Optional[str] = None, min_price: Optional[float] = None, max_price: Optional[float] = None, page: int = 1) -> dict:
+    """Search published products. name_contains and category_name are AND-ed; provide at least one.
 
     Args:
-        query: Search keyword or product name.
-        category_name: Optional category name to filter by.
-        min_price: Optional minimum price.
-        max_price: Optional maximum price.
-        page: Page number starting from 1 (default 1).
+        name_contains: ILIKE substring on product name only. Leave empty for whole-category browsing — names are model codes, not category words.
+        category_name: Category name to filter by.
+        min_price: Minimum price.
+        max_price: Maximum price.
+        page: Page number, starts at 1.
     """
     try:
         domain = [
-            ("name", "ilike", query),
             ("sale_ok", "=", True),
             ("is_published", "=", True),
         ]
+
+        if name_contains:
+            domain.append(("name", "ilike", name_contains))
 
         if category_name:
             cat_ids = odoo.env["product.public.category"].search(
