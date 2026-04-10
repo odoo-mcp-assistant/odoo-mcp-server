@@ -74,7 +74,7 @@ def _set_cache(key: str, data):
 
 @mcp.tool()
 def get_catalogue_overview() -> dict:
-    """Get a compact overview of the entire product catalogue in a single call: categories with product counts and sample products. Use this for broad or exploratory questions like 'what do you sell?' instead of calling search_products multiple times."""
+    """Per category: name, product_count, price_range {min,max}, and cheapest_examples (the 3 lowest-priced products, ascending — NOT the full category). Call this FIRST to discover exact category names before using search_products with a category_name."""
     cached = _get_cache("catalogue_overview")
     if cached is not None:
         return cached
@@ -102,11 +102,15 @@ def get_catalogue_overview() -> dict:
             prods = by_cat.get(cat["id"], [])
             if not prods:
                 continue
+            # Sort once, ascending — so price_range and cheapest_examples
+            # are derived from the same ordered list and the LLM can't
+            # mistake a random sample for "the cheapest one".
+            prods.sort(key=lambda p: p["price"])
             overview.append({
                 "category": cat["name"],
                 "product_count": len(prods),
-                "price_range": {"min": min(p["price"] for p in prods), "max": max(p["price"] for p in prods)},
-                "sample_products": prods[:3],
+                "price_range": {"min": prods[0]["price"], "max": prods[-1]["price"]},
+                "cheapest_examples": prods[:3],
             })
 
         result = {"categories": overview}
@@ -140,8 +144,19 @@ def search_products(name_contains: Optional[str] = None, category_name: Optional
             cat_ids = odoo.env["product.public.category"].search(
                 [("name", "ilike", category_name)]
             )
-            if cat_ids:
-                domain.append(("public_categ_ids", "in", cat_ids))
+            if not cat_ids:
+                # Hard-fail instead of silently dropping the filter — otherwise
+                # the LLM gets back the cheapest products in the WHOLE catalogue
+                # and presents them as if they belonged to the requested category.
+                return {
+                    "error": f"Category '{category_name}' does not exist in the catalogue.",
+                    "suggestion": (
+                        "Call get_catalogue_overview to see the exact list of "
+                        "available categories, then retry search_products with "
+                        "one of those category names."
+                    ),
+                }
+            domain.append(("public_categ_ids", "in", cat_ids))
 
         if min_price is not None:
             domain.append(("list_price", ">=", min_price))
@@ -176,18 +191,54 @@ def search_products(name_contains: Optional[str] = None, category_name: Optional
             "max": most_expensive[0]["list_price"] if most_expensive else None,
         }
 
-        returned = len(products)
-        hint = f"Showing {returned} of {total_count} products (page {page}/{total_pages})."
-        if page < total_pages:
-            hint += f" Call search_products with same arguments and page={page + 1} to get more."
+        # Structured pagination signal — replaces the old loose `hint` string.
+        # Three deterministic shapes so the LLM gets a single, unambiguous
+        # next-action instruction:
+        #   - no_results: zero matches → don't retry, change criteria
+        #   - stop:       last page    → all results have been seen
+        #   - paginate:   more pages   → exact next call to make
+        if total_count == 0:
+            pagination = {
+                "status": "no_results",
+                "page": page,
+                "total_pages": 0,
+                "total_products": 0,
+                "instruction": (
+                    "No products match these filters. Do NOT retry with synonyms. "
+                    "Either widen the filters or tell the user nothing matches."
+                ),
+            }
+        elif page >= total_pages:
+            pagination = {
+                "status": "stop",
+                "page": page,
+                "total_pages": total_pages,
+                "total_products": total_count,
+                "instruction": (
+                    f"Last page. All {total_count} matching products have now been "
+                    f"returned across pages 1..{total_pages}. Do NOT call search_products "
+                    f"again with these filters."
+                ),
+            }
+        else:
+            pagination = {
+                "status": "paginate",
+                "page": page,
+                "total_pages": total_pages,
+                "total_products": total_count,
+                "next_page": page + 1,
+                "instruction": (
+                    f"Page {page} of {total_pages}. {total_count - page * PAGE_SIZE} more "
+                    f"products exist. To see them, call search_products again with the "
+                    f"SAME filters and page={page + 1}. Only paginate if the user's "
+                    f"question actually requires more results — otherwise stop here."
+                ),
+            }
 
         return {
             "products": products,
-            "current_page": page,
-            "total_pages": total_pages,
-            "total_products": total_count,
             "overall_price_range": price_range,
-            "hint": hint,
+            "pagination": pagination,
         }
     except Exception as e:
         return {"error": str(e)}
@@ -305,17 +356,43 @@ def get_orders(page: int = 1, partner_id: Optional[int] = None) -> dict:
                 )
             result.append({**order, "lines": lines})
 
-        returned = len(result)
-        hint = f"Showing {returned} of {total_count} orders (page {page}/{total_pages})."
-        if page < total_pages:
-            hint += f" Call get_orders with page={page + 1} to get more."
+        # Structured pagination — same 3-shape pattern as search_products.
+        if total_count == 0:
+            pagination = {
+                "status": "no_results",
+                "page": page,
+                "total_pages": 0,
+                "total_orders": 0,
+                "instruction": "This customer has no orders. Tell the user directly — do not retry.",
+            }
+        elif page >= total_pages:
+            pagination = {
+                "status": "stop",
+                "page": page,
+                "total_pages": total_pages,
+                "total_orders": total_count,
+                "instruction": (
+                    f"Last page. All {total_count} orders have now been returned "
+                    f"across pages 1..{total_pages}. Do NOT call get_orders again."
+                ),
+            }
+        else:
+            pagination = {
+                "status": "paginate",
+                "page": page,
+                "total_pages": total_pages,
+                "total_orders": total_count,
+                "next_page": page + 1,
+                "instruction": (
+                    f"Page {page} of {total_pages}. {total_count - page * PAGE_SIZE} more "
+                    f"orders exist. To see them, call get_orders with page={page + 1}. "
+                    f"Only paginate if the user actually needs older orders."
+                ),
+            }
 
         return {
             "orders": result,
-            "current_page": page,
-            "total_pages": total_pages,
-            "total_orders": total_count,
-            "hint": hint,
+            "pagination": pagination,
         }
     except Exception as e:
         return {"error": str(e)}
