@@ -1,5 +1,5 @@
 import os
-import random
+import secrets
 import time
 import threading
 from datetime import datetime, timedelta, timezone
@@ -74,44 +74,48 @@ def _set_cache(key: str, data):
 
 @mcp.tool()
 def get_catalogue_overview() -> dict:
-    """Per category: name, product_count, price_range {min,max}, and cheapest_examples (the 3 lowest-priced products, ascending — NOT the full category). Call this FIRST to discover exact category names before using search_products with a category_name."""
+    """Overview of the entire product catalogue. Per category: name, description, product_count, and price_range."""
     cached = _get_cache("catalogue_overview")
     if cached is not None:
         return cached
     try:
-        # Fetch all categories and all published products in just 2 RPC calls
+        # Fetch categories with their website descriptions
         categories = odoo.env["product.public.category"].search_read(
-            [], ["name"], order="sequence asc",
+            [], ["name", "website_description"], order="sequence asc",
         )
-        cat_map = {cat["id"]: cat["name"] for cat in categories}
+        cat_map = {cat["id"]: cat for cat in categories}
 
+        # Fetch only price and category mapping — no product names or details
         all_products = odoo.env["product.template"].search_read(
             [("sale_ok", "=", True), ("is_published", "=", True)],
-            ["name", "list_price", "public_categ_ids"],
+            ["list_price", "public_categ_ids"],
         )
 
-        # Group products by category in Python
+        # Aggregate count and price range per category in Python
         by_cat = defaultdict(list)
         for p in all_products:
             for cid in p.get("public_categ_ids", []):
                 if cid in cat_map:
-                    by_cat[cid].append({"name": p["name"], "price": p["list_price"]})
+                    by_cat[cid].append(p["list_price"])
 
         overview = []
         for cat in categories:
-            prods = by_cat.get(cat["id"], [])
-            if not prods:
+            prices = by_cat.get(cat["id"], [])
+            if not prices:
                 continue
-            # Sort once, ascending — so price_range and cheapest_examples
-            # are derived from the same ordered list and the LLM can't
-            # mistake a random sample for "the cheapest one".
-            prods.sort(key=lambda p: p["price"])
-            overview.append({
+            desc = cat.get("website_description") or ""
+            # Strip HTML tags if present
+            if "<" in desc:
+                import re
+                desc = re.sub(r"<[^>]+>", "", desc).strip()
+            entry = {
                 "category": cat["name"],
-                "product_count": len(prods),
-                "price_range": {"min": prods[0]["price"], "max": prods[-1]["price"]},
-                "cheapest_examples": prods[:3],
-            })
+                "product_count": len(prices),
+                "price_range": {"min": min(prices), "max": max(prices)},
+            }
+            if desc:
+                entry["description"] = desc
+            overview.append(entry)
 
         result = {"categories": overview}
         _set_cache("catalogue_overview", result)
@@ -121,7 +125,7 @@ def get_catalogue_overview() -> dict:
 
 
 @mcp.tool()
-def search_products(name_contains: Optional[str] = None, category_name: Optional[str] = None, min_price: Optional[float] = None, max_price: Optional[float] = None, page: int = 1) -> dict:
+def search_products(name_contains: Optional[str] = None, category_name: Optional[str] = None, min_price: Optional[float] = None, max_price: Optional[float] = None, sort: str = "price_asc", page: int = 1) -> dict:
     """Search published products. name_contains and category_name are AND-ed; provide at least one.
 
     Args:
@@ -129,6 +133,7 @@ def search_products(name_contains: Optional[str] = None, category_name: Optional
         category_name: Category name to filter by.
         min_price: Minimum price.
         max_price: Maximum price.
+        sort: Sort order — "price_asc" for cheapest first, "price_desc" for most expensive first.
         page: Page number, starts at 1.
     """
     try:
@@ -163,6 +168,8 @@ def search_products(name_contains: Optional[str] = None, category_name: Optional
         if max_price is not None:
             domain.append(("list_price", "<=", max_price))
 
+        order_clause = "list_price desc" if sort == "price_desc" else "list_price asc"
+
         total_count = odoo.env["product.template"].search_count(domain)
         total_pages = (total_count + PAGE_SIZE - 1) // PAGE_SIZE if total_count else 0
 
@@ -174,7 +181,7 @@ def search_products(name_contains: Optional[str] = None, category_name: Optional
         products = odoo.env["product.template"].search_read(
             domain,
             ["name", "list_price", "public_categ_ids", "description_sale"],
-            order="list_price asc",
+            order=order_clause,
             limit=PAGE_SIZE,
             offset=offset,
         )
@@ -245,62 +252,95 @@ def search_products(name_contains: Optional[str] = None, category_name: Optional
 
 
 @mcp.tool()
-def get_product_details(name: str) -> dict:
-    """Get full product details: price, description, stock, and attributes/specs.
+def get_product_details(names: list) -> dict:
+    """Get full details for one or more products in a single call: price, description, stock, and attributes/specs.
 
     Args:
-        name: Exact or partial product name.
+        names: List of exact or partial product names (max 5) e.g. ['iPhone 15', 'Samsung S24'].
     """
+    if not names or not isinstance(names, list):
+        return {"error": "names must be a non-empty list of product name strings."}
+    if len(names) > 5:
+        return {"error": "Maximum 5 product names per call."}
+
     try:
-        products = odoo.env["product.template"].search_read(
-            [
-                ("name", "ilike", name),
+        # Build OR domain to match all requested names in one RPC call
+        if len(names) == 1:
+            domain = [
+                ("name", "ilike", names[0]),
                 ("sale_ok", "=", True),
                 ("is_published", "=", True),
-            ],
+            ]
+        else:
+            or_clauses = []
+            for n in names:
+                or_clauses.append(("name", "ilike", n))
+            domain = [("sale_ok", "=", True), ("is_published", "=", True)]
+            or_domain = ["|"] * (len(names) - 1) + or_clauses
+            domain = or_domain + [("sale_ok", "=", True), ("is_published", "=", True)]
+
+        products = odoo.env["product.template"].search_read(
+            domain,
             [
                 "name", "list_price", "description_sale",
                 "public_categ_ids", "attribute_line_ids",
                 "qty_available", "virtual_available",
             ],
-            limit=1,
+            limit=len(names),
         )
- 
-        if not products:
-            return {"error": f"Product '{name}' not found."}
- 
-        product = products[0]
- 
-        # Fetch attribute lines (specs: RAM, Storage, Color, etc.)
-        attr_line_ids = product.pop("attribute_line_ids", [])
-        specs = []
- 
-        if attr_line_ids:
+
+        # Track which requested names had no match
+        not_found = [
+            n for n in names
+            if not any(n.lower() in p["name"].lower() for p in products)
+        ]
+
+        # Batch-fetch all attribute lines across all products in one RPC call
+        all_attr_line_ids = []
+        for p in products:
+            all_attr_line_ids.extend(p.get("attribute_line_ids", []))
+
+        attr_line_map: dict = {}
+        all_value_ids: list = []
+
+        if all_attr_line_ids:
             attr_lines = odoo.env["product.template.attribute.line"].search_read(
-                [("id", "in", attr_line_ids)],
+                [("id", "in", all_attr_line_ids)],
                 ["attribute_id", "value_ids"],
             )
- 
             for line in attr_lines:
+                attr_line_map[line["id"]] = line
+                all_value_ids.extend(line.get("value_ids", []))
+
+        # Batch-fetch all attribute values in one RPC call
+        value_map: dict = {}
+        if all_value_ids:
+            value_records = odoo.env["product.attribute.value"].search_read(
+                [("id", "in", all_value_ids)],
+                ["name"],
+            )
+            value_map = {v["id"]: v["name"] for v in value_records}
+
+        # Assemble specs per product using the pre-fetched maps
+        results = []
+        for product in products:
+            attr_line_ids = product.pop("attribute_line_ids", [])
+            specs = []
+            for lid in attr_line_ids:
+                line = attr_line_map.get(lid)
+                if not line:
+                    continue
                 attr_name = line["attribute_id"][1] if line.get("attribute_id") else "Unknown"
-                value_ids = line.get("value_ids", [])
- 
-                values = []
-                if value_ids:
-                    value_records = odoo.env["product.attribute.value"].search_read(
-                        [("id", "in", value_ids)],
-                        ["name"],
-                    )
-                    values = [v["name"] for v in value_records]
- 
-                specs.append({
-                    "attribute": attr_name,
-                    "values": values,
-                })
- 
-        product["specs"] = specs
-        return product
- 
+                values = [value_map[vid] for vid in line.get("value_ids", []) if vid in value_map]
+                specs.append({"attribute": attr_name, "values": values})
+            product["specs"] = specs
+            results.append(product)
+
+        response = {"products": results}
+        if not_found:
+            response["not_found"] = not_found
+        return response
+
     except Exception as e:
         return {"error": str(e)}
 
@@ -550,11 +590,11 @@ def cancel_order(order_name: str, partner_id: Optional[int] = None) -> dict:
 
 
 @mcp.tool()
-def get_order_details(order_name: str, partner_id: Optional[int] = None) -> dict:
-    """Get full details of an order with line items. partner_id is auto-injected, always pass null.
+def get_order_details(order_names: list, partner_id: Optional[int] = None) -> dict:
+    """Get full details with line items for one or more orders in a single call. partner_id is auto-injected, always pass null.
 
     Args:
-        order_name: Order reference e.g. 'S00001'.
+        order_names: List of order references e.g. ['S00001', 'S00002'].
     """
     if partner_id is None:
         return {
@@ -562,23 +602,49 @@ def get_order_details(order_name: str, partner_id: Optional[int] = None) -> dict
             "code": "AUTH_REQUIRED",
             "message": "Authentication required. Please sign in to your account or verify your identity via email.",
         }
+    if not order_names or not isinstance(order_names, list):
+        return {"error": "order_names must be a non-empty list of order reference strings."}
+
     try:
+        # Fetch all requested orders in one RPC call
         orders = odoo.env["sale.order"].search_read(
-            [("name", "=", order_name), ("partner_id", "=", partner_id)],
+            [("name", "in", order_names), ("partner_id", "=", partner_id)],
             ["name", "date_order", "state", "amount_total",
              "currency_id", "order_line", "note"],
         )
-        if not orders:
-            return {"error": f"Order '{order_name}' not found."}
 
-        order = orders[0]
-        line_ids = order.pop("order_line", [])
-        if line_ids:
-            order["lines"] = odoo.env["sale.order.line"].search_read(
-                [("id", "in", line_ids)],
-                ["product_id", "product_uom_qty", "price_unit", "price_subtotal"],
+        # Track which order names were not found
+        found_names = {o["name"] for o in orders}
+        not_found = [n for n in order_names if n not in found_names]
+
+        # Batch-fetch all order lines across all orders in one RPC call
+        all_line_ids = []
+        for order in orders:
+            all_line_ids.extend(order.get("order_line", []))
+
+        lines_by_order: dict = {}
+        if all_line_ids:
+            all_lines = odoo.env["sale.order.line"].search_read(
+                [("id", "in", all_line_ids)],
+                ["order_id", "product_id", "product_uom_qty", "price_unit", "price_subtotal"],
             )
-        return order
+            for line in all_lines:
+                oid = line["order_id"][0]
+                lines_by_order.setdefault(oid, []).append(line)
+
+        # Assemble final results
+        results = []
+        for order in orders:
+            order_id = order["id"]
+            order.pop("order_line", None)
+            order["lines"] = lines_by_order.get(order_id, [])
+            results.append(order)
+
+        response = {"orders": results}
+        if not_found:
+            response["not_found"] = not_found
+        return response
+
     except Exception as e:
         return {"error": str(e)}
 
@@ -608,7 +674,7 @@ def get_my_profile(partner_id: Optional[int] = None) -> dict:
 # ============================================================
 
 @mcp.tool()
-def get_invoices(partner_id: Optional[int] = None) -> list:
+def get_invoices(partner_id: Optional[int] = None) -> dict:
     """Get all invoices for the customer. partner_id is auto-injected, always pass null."""
     if partner_id is None:
         return {
@@ -629,7 +695,7 @@ def get_invoices(partner_id: Optional[int] = None) -> list:
              "amount_total", "amount_residual", "currency_id"],
             order="invoice_date desc",
         )
-        return invoices
+        return {"invoices": invoices}
     except Exception as e:
         return {"error": str(e)}
 
@@ -683,7 +749,7 @@ def get_invoice_details(invoice_name: str, partner_id: Optional[int] = None) -> 
 
 
 @mcp.tool()
-def get_unpaid_invoices(partner_id: Optional[int] = None) -> list:
+def get_unpaid_invoices(partner_id: Optional[int] = None) -> dict:
     """Get unpaid/partially paid invoices. partner_id is auto-injected, always pass null."""
     if partner_id is None:
         return {
@@ -704,10 +770,9 @@ def get_unpaid_invoices(partner_id: Optional[int] = None) -> list:
              "amount_total", "amount_residual", "currency_id"],
             order="invoice_date_due asc",
         )
-        return invoices
+        return {"invoices": invoices}
     except Exception as e:
         return {"error": str(e)}
-
 
 
 # ============================================================
@@ -720,6 +785,7 @@ _otp_store: dict = {}
 _otp_lock = threading.Lock()
 
 OTP_EXPIRY_MINUTES = 10
+OTP_MAX_ATTEMPTS = 5
 
 
 @mcp.tool()
@@ -734,11 +800,11 @@ def send_verification_email(email: str) -> dict:
         return {"error": "Invalid email address."}
 
     try:
-        code = str(random.randint(100000, 999999))
+        code = str(secrets.randbelow(900000) + 100000)
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=OTP_EXPIRY_MINUTES)
 
         with _otp_lock:
-            _otp_store[email] = {"code": code, "expires_at": expires_at}
+            _otp_store[email] = {"code": code, "expires_at": expires_at, "attempts": 0}
 
         # Send via Odoo mail
         mail_id = odoo.env["mail.mail"].create({
@@ -776,19 +842,30 @@ def verify_email_otp(email: str, otp_code: str, session_id: Optional[int] = None
     with _otp_lock:
         entry = _otp_store.get(email)
 
-    if not entry:
-        return {"error": "No verification code was requested for this email. Please call send_verification_email first."}
+        if not entry:
+            return {"error": "No verification code was requested for this email. Please call send_verification_email first."}
 
-    if datetime.now(timezone.utc) > entry["expires_at"]:
-        with _otp_lock:
+        if datetime.now(timezone.utc) > entry["expires_at"]:
             _otp_store.pop(email, None)
-        return {"error": "The code has expired. Please request a new one."}
+            return {"error": "The code has expired. Please request a new one."}
 
-    if entry["code"] != otp_code:
-        return {"error": "Invalid code. Please try again."}
+        if entry["attempts"] >= OTP_MAX_ATTEMPTS:
+            _otp_store.pop(email, None)
+            return {
+                "error": (
+                    f"Too many failed attempts. This code has been invalidated. "
+                    f"Please call send_verification_email to request a new one."
+                )
+            }
 
-    # Code is valid — consume it
-    with _otp_lock:
+        if entry["code"] != otp_code:
+            entry["attempts"] += 1
+            remaining = OTP_MAX_ATTEMPTS - entry["attempts"]
+            return {
+                "error": f"Invalid code. Please try again. {remaining} attempt(s) remaining."
+            }
+
+        # Code is valid — consume it atomically
         _otp_store.pop(email, None)
 
     try:
