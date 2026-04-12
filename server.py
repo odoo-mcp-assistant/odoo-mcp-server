@@ -942,7 +942,7 @@ def verify_email_otp(email: str, otp_code: str, session_id: Optional[int] = None
 # Resources  (contenu statique exposé à l'agent via URI)
 # ============================================================
  
-@mcp.resource("policy://terms-of-use")
+@mcp.tool()
 def get_terms_of_use() -> str:
     """Conditions Générales d'Utilisation du site e-commerce."""
     return """
@@ -982,7 +982,7 @@ Les présentes CGU sont régies par le droit tunisien ; tout litige relève des 
 """
  
  
-@mcp.resource("policy://installment-sales")
+@mcp.tool()
 def get_installment_sales_policy() -> str:
     """Politique de vente par facilité de paiement (crédit à la consommation)."""
     return """
@@ -1043,7 +1043,7 @@ Toute réclamation relative à un contrat de facilité doit être adressée à :
 """
  
  
-@mcp.resource("policy://delivery-policy")
+@mcp.tool()
 def get_delivery_policy() -> str:
     """Politique de livraison : zones, délais, frais et procédures."""
     return """
