@@ -938,7 +938,169 @@ def verify_email_otp(email: str, otp_code: str, session_id: Optional[int] = None
     except Exception as e:
         return {"error": str(e)}
 
-
+# ============================================================
+# Resources  (contenu statique exposé à l'agent via URI)
+# ============================================================
+ 
+@mcp.resource("policy://terms-of-use")
+def get_terms_of_use() -> str:
+    """Conditions Générales d'Utilisation du site e-commerce."""
+    return """
+# Conditions Générales d'Utilisation (CGU)
+ 
+**Dernière mise à jour : janvier 2025**
+ 
+## 1. Présentation du site
+Le site est exploité par [Nom de la société], société tunisienne dont le siège est à Tunis.
+Il propose à la vente des produits électroménagers neufs destinés aux particuliers et professionnels
+résidant en Tunisie.
+ 
+## 2. Acceptation des conditions
+L'utilisation du site vaut acceptation pleine et entière des présentes CGU.
+ 
+## 3. Compte client
+- Inscription gratuite, réservée aux personnes majeures (18 ans ou plus) disposant d'un email
+  et d'un numéro de téléphone tunisien valides.
+- Le client est responsable de la confidentialité de ses identifiants.
+- Le site peut suspendre tout compte en cas d'utilisation frauduleuse.
+ 
+## 4. Produits et prix
+- Les offres sont valables dans la limite des stocks disponibles.
+- Les photographies sont illustratives ; seules les caractéristiques de la fiche produit font foi.
+- Les prix sont en Dinars Tunisiens (TND) TTC et peuvent être modifiés sans préavis.
+  Le prix applicable est celui affiché au moment de la validation de la commande.
+ 
+## 5. Commande
+- Une commande est ferme dès confirmation du paiement ou signature du contrat de facilité.
+ 
+## 7. Limitation de responsabilité et droit applicable
+Le site décline toute responsabilité pour les dommages indirects liés à son utilisation.
+Les présentes CGU sont régies par le droit tunisien ; tout litige relève des tribunaux de Tunis.
+ 
+## 8. Contact
+**Service client :** contact@[domaine].tn | +216 XX XXX XXX — Lundi – Samedi, 8h00 – 18h00
+"""
+ 
+ 
+@mcp.resource("policy://installment-sales")
+def get_installment_sales_policy() -> str:
+    """Politique de vente par facilité de paiement (crédit à la consommation)."""
+    return """
+# Politique de Vente par Facilité de Paiement
+ 
+**Dernière mise à jour : janvier 2025**
+ 
+## 1. Principe général
+Afin de rendre l'électroménager accessible au plus grand nombre, le site propose des solutions de
+paiement échelonné en partenariat avec des établissements financiers agréés en Tunisie.
+Ces facilités sont soumises à l'acceptation du dossier par l'organisme financier partenaire.
+ 
+## 2. Conditions d'éligibilité
+Pour bénéficier d'un paiement facilité, le client doit :
+- Être une personne physique tunisienne ou étrangère résidant légalement en Tunisie.
+- Être âgé de 21 ans minimum à la date de la demande.
+- Justifier d'un revenu régulier (salarié, indépendant, retraité).
+- Présenter les documents requis (voir section 4).
+ 
+## 3. Durées et taux applicables
+| Durée | Taux appliqué |
+|-------|---------------|
+| 3 mois | **0 % — Sans intérêts** |
+| 6 mois |  12,95 % |
+| 9 mois |  18,14 % |
+| 12 mois|  23,04 % | 
+ 
+## 4. Documents requis
+**Salariés :**
+- Copie de la CIN (recto-verso)
+- 3 derniers bulletins de salaire
+- Attestation de travail de moins de 3 mois
+ 
+**Indépendants / Commerçants :**
+- Copie de la CIN
+- Patente ou registre du commerce
+- Déclaration d'impôts des 2 derniers exercices ou relevés bancaires des 6 derniers mois
+ 
+**Retraités :**
+- Copie de la CIN
+- Dernière fiche de pension
+ 
+## 5. Processus de demande (en boutique uniquement)
+La facilité de paiement se fait **exclusivement en boutique physique** — aucune souscription
+en ligne n'est disponible. Le processus est le suivant :
+1. Le client se présente en boutique avec les documents requis (voir section 4).
+2. Le conseiller vérifie le dossier et soumet la demande au partenaire financier.
+3. La réponse de principe est communiquée sous **48 à 72 heures ouvrables**.
+4. En cas d'accord, le client signe le contrat en boutique et la commande est préparée pour livraison.
+ 
+## 6. Refus de dossier
+En cas de refus par l'organisme financier, la commande est annulée sans frais. Le client peut
+reformuler sa demande via un autre mode de paiement (comptant ou carte bancaire).
+ 
+## 7. Réclamations
+Toute réclamation relative à un contrat de facilité doit être adressée à :
+**facilite@[domaine].tn** ou au +216 XX XXX XXX (option 2).
+"""
+ 
+ 
+@mcp.resource("policy://delivery-policy")
+def get_delivery_policy() -> str:
+    """Politique de livraison : zones, délais, frais et procédures."""
+    return """
+# Politique de Livraison
+ 
+**Dernière mise à jour : janvier 2025**
+ 
+## 1. Zones de livraison
+Le site livre sur l'ensemble du territoire tunisien, y compris :
+- Grand Tunis (Tunis, Ariana, Ben Arous, Manouba)
+- Zones côtières (Sousse, Sfax, Monastir, Hammamet, Nabeul, Bizerte…)
+- Zones intérieures (Kairouan, Gafsa, Sidi Bouzid, Kasserine, Tozeur…)
+  
+## 2. Délais de livraison
+| Zone | Délai standard | Délai express |
+|------|---------------|---------------|
+| Grand Tunis | 24 – 48 h | Jour même (si commande avant 11h) |
+| Zones côtières principales | 48 – 72 h | 24 h (sur demande) |
+| Zones intérieures | 3 – 5 jours ouvrables | Non disponible |
+| Zones isolées / îles | 5 – 7 jours ouvrables | Non disponible |
+ 
+Les délais sont calculés à partir de la **confirmation de commande**, hors week-ends et jours fériés tunisiens.
+ 
+## 3. Frais de livraison
+Les frais de livraison sont de **9 TND** sur toute la Tunisie, quelle que soit la zone ou le montant de la commande.
+  
+## 4. Modalités de livraison pour le gros électroménager
+Pour les produits volumineux (réfrigérateurs, machines à laver, climatiseurs, cuisinières…) :
+- La livraison est effectuée par notre équipe technique jusqu'au **pied de l'immeuble** ou
+  **à l'entrée du domicile** par défaut.
+ 
+## 5. Réception et vérification
+- Le client (ou son représentant) doit être présent lors de la livraison.
+- Il est impératif de **vérifier l'état du colis/produit en présence du livreur**.
+- En cas de dommage visible à la livraison, le client doit :
+  1. Refuser la livraison **et** noter les réserves sur le bon de livraison.
+  2. Contacter le service client dans les **24 heures** par email ou téléphone.
+- Après signature du bon de livraison sans réserves, aucune réclamation pour dommage
+  apparent ne sera acceptée.
+ 
+## 6. Absence lors de la livraison
+- En cas d'absence, le livreur laissera un avis de passage. Une seconde tentative est effectuée
+  sous **48 heures**.
+  
+## 7. Retours et échanges
+- Le client dispose d'un délai de **7 jours** à compter de la réception pour retourner un
+  produit non conforme ou défectueux.
+- Le produit doit être retourné dans son **emballage d'origine**, complet (accessoires, notice,
+  facture).
+- Les frais de retour sont à la charge du site en cas de défaut constaté ou d'erreur d'expédition.
+ 
+## 8. Garantie légale
+Tous les produits bénéficient de la garantie légale de conformité tunisienne. La durée de
+garantie constructeur est précisée sur chaque fiche produit (généralement 1 à 2 ans).
+ 
+"""
+ 
 # ============================================================
 # Streamable HTTP App
 # ============================================================
