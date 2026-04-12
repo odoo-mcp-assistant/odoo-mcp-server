@@ -68,13 +68,35 @@ def _set_cache(key: str, data):
         _cache[key] = {"data": data, "expires": time.time() + CACHE_TTL}
 
 
+def _slugify(text: str) -> str:
+    """Odoo-style slug: lowercase, ASCII, non-alphanumerics → hyphens."""
+    import re
+    import unicodedata
+    normalized = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-zA-Z0-9]+", "-", normalized).strip("-").lower()
+
+
+def _get_base_url() -> str:
+    """Fetch Odoo's configured public base URL, cached."""
+    cached = _get_cache("base_url")
+    if cached is not None:
+        return cached
+    try:
+        base = odoo.env["ir.config_parameter"].sudo().get_param("web.base.url")
+    except Exception:
+        base = f"http://{ODOO_HOST}:{ODOO_PORT}"
+    base = (base or "").rstrip("/")
+    _set_cache("base_url", base)
+    return base
+
+
 # ============================================================
 # Product Tools
 # ============================================================
 
 @mcp.tool()
 def get_catalogue_overview() -> dict:
-    """Overview of the entire product catalogue. Per category: name, description, product_count, and price_range."""
+    """What the store sells: all categories with descriptions, product counts, price ranges, and a `url` to browse each category. Always share the url with the user when listing categories."""
     cached = _get_cache("catalogue_overview")
     if cached is not None:
         return cached
@@ -84,6 +106,7 @@ def get_catalogue_overview() -> dict:
             [], ["name", "website_description"], order="sequence asc",
         )
         cat_map = {cat["id"]: cat for cat in categories}
+        base_url = _get_base_url()
 
         # Fetch only price and category mapping — no product names or details
         all_products = odoo.env["product.template"].search_read(
@@ -115,6 +138,8 @@ def get_catalogue_overview() -> dict:
             }
             if desc:
                 entry["description"] = desc
+            slug = _slugify(cat["name"])
+            entry["url"] = f"{base_url}/shop/category/{slug}-{cat['id']}"
             overview.append(entry)
 
         result = {"categories": overview}
@@ -126,7 +151,7 @@ def get_catalogue_overview() -> dict:
 
 @mcp.tool()
 def search_products(name_contains: Optional[str] = None, category_name: Optional[str] = None, min_price: Optional[float] = None, max_price: Optional[float] = None, sort: str = "price_asc", page: int = 1) -> dict:
-    """Search published products. name_contains and category_name are AND-ed; provide at least one.
+    """Search published products. name_contains and category_name are AND-ed; provide at least one. Each product includes a `url` field — always share it with the user so they can open the product page.
 
     Args:
         name_contains: ILIKE substring on product name only. Leave empty for whole-category browsing — names are model codes, not category words.
@@ -180,11 +205,18 @@ def search_products(name_contains: Optional[str] = None, category_name: Optional
 
         products = odoo.env["product.template"].search_read(
             domain,
-            ["name", "list_price", "public_categ_ids", "description_sale"],
+            ["name", "list_price", "public_categ_ids", "description_sale", "website_url"],
             order=order_clause,
             limit=PAGE_SIZE,
             offset=offset,
         )
+
+        # Build public URL per product: base + website_url (+ ?category=<id> if filtered)
+        base_url = _get_base_url()
+        category_qs = f"?category={cat_ids[0]}" if category_name and cat_ids else ""
+        for p in products:
+            path = p.pop("website_url", "") or ""
+            p["url"] = f"{base_url}{path}{category_qs}" if path else None
 
         # Get the overall price range across ALL matching products (not just this page)
         cheapest = odoo.env["product.template"].search_read(
@@ -253,7 +285,7 @@ def search_products(name_contains: Optional[str] = None, category_name: Optional
 
 @mcp.tool()
 def get_product_details(names: list) -> dict:
-    """Get full details for one or more products in a single call: price, description, stock, and attributes/specs.
+    """Get full details for one or more products in a single call: price, description, stock, attributes/specs, and a `url` to the product page. Always share the url with the user.
 
     Args:
         names: List of exact or partial product names (max 5) e.g. ['iPhone 15', 'Samsung S24'].
@@ -284,10 +316,16 @@ def get_product_details(names: list) -> dict:
             [
                 "name", "list_price", "description_sale",
                 "public_categ_ids", "attribute_line_ids",
-                "qty_available", "virtual_available",
+                "qty_available", "virtual_available", "website_url",
             ],
             limit=len(names),
         )
+
+        # Build public URL per product
+        base_url = _get_base_url()
+        for p in products:
+            path = p.pop("website_url", "") or ""
+            p["url"] = f"{base_url}{path}" if path else None
 
         # Track which requested names had no match
         not_found = [
