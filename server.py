@@ -506,12 +506,8 @@ def create_order(product_lines: list, partner_id: Optional[int] = None) -> dict:
         }
 
     try:
-        # Create the order header
-        order_id = odoo.env["sale.order"].create({
-            "partner_id": partner_id,
-        })
-
-        # Add order lines
+        # --- Phase 1: resolve all products before touching the order ---
+        resolved_lines = []
         for line in product_lines:
             product_name = line.get("product_name")
             quantity     = line.get("quantity", 1)
@@ -520,27 +516,46 @@ def create_order(product_lines: list, partner_id: Optional[int] = None) -> dict:
                 continue
 
             # Search for the product by name
-            product_ids = odoo.env["product.product"].search(
-                [("name", "ilike", product_name)], limit=1
+            products = odoo.env["product.product"].search_read(
+                [("name", "ilike", product_name)],
+                ["name", "list_price"],
             )
 
-            if not product_ids:
-                # Product not found — delete the empty order and return error
-                odoo.env["sale.order"].browse(order_id).action_cancel()
+            if not products:
                 return {
                     "error": True,
-                    "message": f"Product '{product_name}' not found. Order was not created."
+                    "message": f"Product '{product_name}' not found. Order was not created.",
                 }
 
-            product_id = product_ids[0]
+            if len(products) > 1:
+                return {
+                    "error": True,
+                    "message": (
+                        f"'{product_name}' matched {len(products)} products. "
+                        "Order was not created. "
+                        "Please call create_order again using the exact product name from the list below."
+                    ),
+                    "matching_products": [
+                        {"id": p["id"], "name": p["name"], "price": p["list_price"]}
+                        for p in products
+                    ],
+                }
 
-            line_vals = {
+            resolved_lines.append({"product_id": products[0]["id"], "quantity": quantity})
+
+        # --- Phase 2: all products resolved — create the order ---
+        # Create the order header
+        order_id = odoo.env["sale.order"].create({
+            "partner_id": partner_id,
+        })
+
+        # Add order lines
+        for line in resolved_lines:
+            odoo.env["sale.order.line"].create({
                 "order_id":        order_id,
-                "product_id":      product_id,
-                "product_uom_qty": quantity,
-            }
-
-            odoo.env["sale.order.line"].create(line_vals)
+                "product_id":      line["product_id"],
+                "product_uom_qty": line["quantity"],
+            })
 
         # Read back the created order
         order = odoo.env["sale.order"].read(
