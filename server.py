@@ -96,7 +96,7 @@ def _get_base_url() -> str:
 
 @mcp.tool()
 def get_catalogue_overview() -> dict:
-    """What the store sells: all categories with descriptions, product counts, price ranges, and a `url` to browse each category. Always share the url with the user when listing categories."""
+    """What the store sells: all categories with descriptions, product counts, price ranges, and a `url` to browse each category."""
     cached = _get_cache("catalogue_overview")
     if cached is not None:
         return cached
@@ -142,7 +142,13 @@ def get_catalogue_overview() -> dict:
             entry["url"] = f"{base_url}/shop/category/{slug}-{cat['id']}"
             overview.append(entry)
 
-        result = {"categories": overview}
+        result = {
+            "categories": overview,
+            "presentation_instruction": (
+                "When mentioning any category from this result, render its `url` "
+                "as a markdown link so the user can click through to browse it."
+            ),
+        }
         _set_cache("catalogue_overview", result)
         return result
     except Exception as e:
@@ -151,7 +157,7 @@ def get_catalogue_overview() -> dict:
 
 @mcp.tool()
 def search_products(name_contains: Optional[str] = None, category_name: Optional[str] = None, min_price: Optional[float] = None, max_price: Optional[float] = None, sort: str = "price_asc", page: int = 1) -> dict:
-    """Search published products. name_contains and category_name are AND-ed; provide at least one. Each product includes a `url` field — always share it with the user so they can open the product page.
+    """Search published products. name_contains and category_name are AND-ed; provide at least one. Each product includes a `url` field pointing to its public product page.
 
     Args:
         name_contains: ILIKE substring on product name only. Leave empty for whole-category browsing — names are model codes, not category words.
@@ -278,6 +284,10 @@ def search_products(name_contains: Optional[str] = None, category_name: Optional
             "products": products,
             "overall_price_range": price_range,
             "pagination": pagination,
+            "presentation_instruction": (
+                "When mentioning any product from this result, render its `url` "
+                "as a markdown link so the user can open the product page directly."
+            ),
         }
     except Exception as e:
         return {"error": str(e)}
@@ -285,7 +295,7 @@ def search_products(name_contains: Optional[str] = None, category_name: Optional
 
 @mcp.tool()
 def get_product_details(names: list) -> dict:
-    """Get full details for one or more products in a single call: price, description, stock, attributes/specs, and a `url` to the product page. Always share the url with the user.
+    """Get full details for one or more products in a single call: price, description, stock, attributes/specs, and a `url` to the product page.
 
     Args:
         names: List of exact or partial product names (max 5) e.g. ['iPhone 15', 'Samsung S24'].
@@ -374,7 +384,13 @@ def get_product_details(names: list) -> dict:
             product["specs"] = specs
             results.append(product)
 
-        response = {"products": results}
+        response = {
+            "products": results,
+            "presentation_instruction": (
+                "When mentioning any product from this result, render its `url` "
+                "as a markdown link so the user can open the product page directly."
+            ),
+        }
         if not_found:
             response["not_found"] = not_found
         return response
