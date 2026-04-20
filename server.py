@@ -1068,9 +1068,6 @@ en ligne n'est disponible. Le processus est le suivant :
 En cas de refus par l'organisme financier, la commande est annulée sans frais. Le client peut
 reformuler sa demande via un autre mode de paiement (comptant ou carte bancaire).
  
-## 7. Réclamations
-Toute réclamation relative à un contrat de facilité doit être adressée à :
-**facilite@[domaine].tn** ou au +216 XX XXX XXX (option 2).
 """
  
  
