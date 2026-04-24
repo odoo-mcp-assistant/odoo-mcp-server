@@ -157,7 +157,8 @@ def get_catalogue_overview() -> dict:
 
 @mcp.tool()
 def search_products(name_contains: Optional[str] = None, category_name: Optional[str] = None, min_price: Optional[float] = None, max_price: Optional[float] = None, sort: str = "price_asc", page: int = 1) -> dict:
-    """Search published products. name_contains and category_name are AND-ed; provide at least one. Each product includes a `url` field pointing to its public product page.
+    """Search published products. name_contains and category_name are AND-ed; provide at least one. Each product includes a `url` field pointing to its public product website page.
+    Results are paginated — check the `pagination` object in the response for next steps.
 
     Args:
         name_contains: ILIKE substring on product name only. Leave empty for whole-category browsing — names are model codes, not category words.
@@ -324,18 +325,30 @@ def get_product_details(names: list) -> dict:
         products = odoo.env["product.template"].search_read(
             domain,
             [
-                "name", "list_price", "description_sale",
+                "name", "list_price", "description_ecommerce",
                 "public_categ_ids", "attribute_line_ids",
                 "qty_available", "virtual_available", "website_url",
             ],
             limit=len(names),
         )
 
-        # Build public URL per product
+        # Build public URL per product and convert description_ecommerce HTML to plain text
+        import re as _re
+        import html as _html
         base_url = _get_base_url()
         for p in products:
             path = p.pop("website_url", "") or ""
             p["url"] = f"{base_url}{path}" if path else None
+            raw_desc = p.get("description_ecommerce") or ""
+            if raw_desc:
+                plain = _re.sub(r"<br\s*/?>", "\n", raw_desc, flags=_re.IGNORECASE)
+                plain = _re.sub(r"</?(p|div|li|tr|h[1-6])[^>]*>", "\n", plain, flags=_re.IGNORECASE)
+                plain = _re.sub(r"<[^>]+>", "", plain)
+                plain = _html.unescape(plain)
+                plain = _re.sub(r"\n{3,}", "\n\n", plain).strip()
+            else:
+                plain = ""
+            p["description_ecommerce"] = plain
 
         # Track which requested names had no match
         not_found = [
@@ -405,7 +418,8 @@ def get_product_details(names: list) -> dict:
 
 @mcp.tool()
 def get_orders(page: int = 1, partner_id: Optional[int] = None) -> dict:
-    """Get sale orders for the customer (paginated, 5 per page). partner_id is auto-injected, always pass null.
+    """Get sale orders for the customer. partner_id is auto-injected, always pass null.
+    Results are paginated — check the `pagination` object in the response for next steps.
 
     Args:
         page: Page number starting from 1 (default 1).
@@ -1007,9 +1021,6 @@ L'utilisation du site vaut acceptation pleine et entière des présentes CGU.
 ## 7. Limitation de responsabilité et droit applicable
 Le site décline toute responsabilité pour les dommages indirects liés à son utilisation.
 Les présentes CGU sont régies par le droit tunisien ; tout litige relève des tribunaux de Tunis.
- 
-## 8. Contact
-**Service client :** contact@[domaine].tn | +216 XX XXX XXX — Lundi – Samedi, 8h00 – 18h00
 """
  
  
