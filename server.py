@@ -158,7 +158,7 @@ def get_catalogue_overview() -> dict:
 @mcp.tool()
 def search_products(name_contains: Optional[str] = None, category_name: Optional[str] = None, min_price: Optional[float] = None, max_price: Optional[float] = None, sort: str = "price_asc", page: int = 1) -> dict:
     """Search published products. name_contains and category_name are AND-ed; provide at least one. Each product includes a `url` field pointing to its public product website page.
-    Results are paginated — check the `pagination` object in the response for next steps.
+    The response may not contain all matching products — check the `pagination` object in the response for next steps.
 
     Args:
         name_contains: ILIKE substring on product name only. Leave empty for whole-category browsing — names are model codes, not category words.
@@ -419,7 +419,7 @@ def get_product_details(names: list) -> dict:
 @mcp.tool()
 def get_orders(page: int = 1, partner_id: Optional[int] = None) -> dict:
     """Get sale orders for the customer. partner_id is auto-injected, always pass null.
-    Results are paginated — check the `pagination` object in the response for next steps.
+    The response may not contain all the customer's orders — check the `pagination` object in the response for next steps.
 
     Args:
         page: Page number starting from 1 (default 1).
