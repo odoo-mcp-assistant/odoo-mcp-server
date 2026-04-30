@@ -654,7 +654,7 @@ def cancel_order(order_name: str, partner_id: Optional[int] = None) -> dict:
                 "error": f"Order '{order_name}' is already cancelled."
             }
 
-        if order.state not in ("draft", "sent", "sale"):
+        if order.state in ("sent", "sale"):
             return {
                 "error": f"Order '{order_name}' cannot be cancelled. Current state: {order.state}."
             }
