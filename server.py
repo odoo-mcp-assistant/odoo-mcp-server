@@ -584,6 +584,92 @@ def create_order(product_lines: list, partner_id: Optional[int] = None) -> dict:
 
 
 @mcp.tool()
+def update_order(order_name: str, product_lines: list, partner_id: Optional[int] = None) -> dict:
+    """Add new product lines to an existing draft sale order. Only adds lines — does not modify quantities of existing lines and does not remove lines. The order must be in 'draft' state; confirmed, sent, or cancelled orders cannot be modified. partner_id is auto-injected, always pass null.
+
+    Args:
+        order_name: Order reference e.g. 'S00001'.
+        product_lines: List of {product_name: str, quantity: float} to add to the order.
+    """
+    if partner_id is None:
+        return {
+            "error": True,
+            "code": "AUTH_REQUIRED",
+            "message": "Authentication required. Please sign in to your account or verify your identity via email.",
+        }
+
+    try:
+        order_id = odoo.env["sale.order"].search([("name", "=", order_name), ("partner_id", "=", partner_id)])
+
+        if not order_id:
+            return {
+                "error": f"Order '{order_name}' not found."
+            }
+
+        order = odoo.env["sale.order"].browse(order_id)
+
+        if order.state != "draft":
+            return {
+                "error": f"Order '{order_name}' cannot be updated. Only draft orders can be modified. Current state: {order.state}."
+            }
+
+        # --- Phase 1: resolve all products before touching the order ---
+        resolved_lines = []
+        for line in product_lines:
+            product_name = line.get("product_name")
+            quantity     = line.get("quantity", 1)
+
+            if not product_name:
+                continue
+
+            products = odoo.env["product.product"].search_read(
+                [("name", "ilike", product_name)],
+                ["name", "list_price"],
+            )
+
+            if not products:
+                return {
+                    "error": True,
+                    "message": f"Product '{product_name}' not found. Order was not updated.",
+                }
+
+            if len(products) > 1:
+                return {
+                    "error": True,
+                    "message": (
+                        f"'{product_name}' matched {len(products)} products. "
+                        "Order was not updated. "
+                        "Please call update_order again using the exact product name from the list below."
+                    ),
+                    "matching_products": [
+                        {"id": p["id"], "name": p["name"], "price": p["list_price"]}
+                        for p in products
+                    ],
+                }
+
+            resolved_lines.append({"product_id": products[0]["id"], "quantity": quantity})
+
+        # --- Phase 2: all products resolved — add the new lines ---
+        for line in resolved_lines:
+            odoo.env["sale.order.line"].create({
+                "order_id":        order_id[0],
+                "product_id":      line["product_id"],
+                "product_uom_qty": line["quantity"],
+            })
+
+        # Read back the updated order
+        updated = odoo.env["sale.order"].read(
+            order_id,
+            ["name", "state", "amount_total", "partner_id"]
+        )[0]
+
+        return {"success": True, "order": updated}
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
 def confirm_order(order_name: str, partner_id: Optional[int] = None) -> dict:
     """Confirm a sale order (draft → sale). partner_id is auto-injected, always pass null.
 
@@ -734,7 +820,7 @@ def get_order_details(order_names: list, partner_id: Optional[int] = None) -> di
 
 @mcp.tool()
 def get_my_profile(partner_id: Optional[int] = None) -> dict:
-    """Get customer profile (name, email, phone, address). partner_id is auto-injected, always pass null."""
+    """Use this tool when the user ask for his personal information to get his profile (name, email, phone, address). partner_id is auto-injected, always pass null."""
     if partner_id is None:
         return {
             "error": True,
