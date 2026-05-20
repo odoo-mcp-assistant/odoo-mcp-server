@@ -957,7 +957,7 @@ _otp_lock = threading.Lock()
 # Stops a blocked user from bypassing the attempt limit by requesting a fresh OTP.
 _otp_blocks: dict = {}
 
-OTP_EXPIRY_MINUTES = 10
+OTP_EXPIRY_MINUTES = 5
 OTP_MAX_ATTEMPTS = 5
 OTP_BLOCK_MINUTES = 10
 
