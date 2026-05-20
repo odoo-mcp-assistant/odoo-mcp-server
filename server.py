@@ -953,8 +953,29 @@ def get_unpaid_invoices(partner_id: Optional[int] = None) -> dict:
 _otp_store: dict = {}
 _otp_lock = threading.Lock()
 
+# Cooldown block after too many failed attempts: { email -> blocked_until_datetime }.
+# Stops a blocked user from bypassing the attempt limit by requesting a fresh OTP.
+_otp_blocks: dict = {}
+
 OTP_EXPIRY_MINUTES = 10
 OTP_MAX_ATTEMPTS = 5
+OTP_BLOCK_MINUTES = 10
+
+
+def _is_blocked(email: str) -> Optional[dict]:
+    """If email is currently in cooldown, return an error dict; else None.
+    Caller must hold _otp_lock."""
+    until = _otp_blocks.get(email)
+    now = datetime.now(timezone.utc)
+    if until is None or until <= now:
+        return None
+    minutes_left = max(1, int((until - now).total_seconds() / 60) + 1)
+    return {
+        "error": (
+            f"Too many failed verification attempts. "
+            f"Please try again in {minutes_left} minute(s)."
+        )
+    }
 
 
 @mcp.tool()
@@ -967,6 +988,11 @@ def send_verification_email(email: str) -> dict:
     email = email.strip().lower()
     if not email or "@" not in email:
         return {"error": "Invalid email address."}
+
+    with _otp_lock:
+        blocked = _is_blocked(email)
+        if blocked:
+            return blocked
 
     try:
         code = str(secrets.randbelow(900000) + 100000)
@@ -1009,6 +1035,10 @@ def verify_email_otp(email: str, otp_code: str, session_id: Optional[int] = None
     otp_code = otp_code.strip()
 
     with _otp_lock:
+        blocked = _is_blocked(email)
+        if blocked:
+            return blocked
+
         entry = _otp_store.get(email)
 
         if not entry:
@@ -1018,17 +1048,19 @@ def verify_email_otp(email: str, otp_code: str, session_id: Optional[int] = None
             _otp_store.pop(email, None)
             return {"error": "The code has expired. Please request a new one."}
 
-        if entry["attempts"] >= OTP_MAX_ATTEMPTS:
-            _otp_store.pop(email, None)
-            return {
-                "error": (
-                    f"Too many failed attempts. This code has been invalidated. "
-                    f"Please call send_verification_email to request a new one."
-                )
-            }
-
         if entry["code"] != otp_code:
             entry["attempts"] += 1
+            if entry["attempts"] >= OTP_MAX_ATTEMPTS:
+                # Lock this email out for the cooldown window so the user
+                # can't bypass by requesting a fresh OTP.
+                _otp_blocks[email] = datetime.now(timezone.utc) + timedelta(minutes=OTP_BLOCK_MINUTES)
+                _otp_store.pop(email, None)
+                return {
+                    "error": (
+                        f"Too many failed attempts. Verification has been blocked "
+                        f"for {OTP_BLOCK_MINUTES} minutes. Please try again later."
+                    )
+                }
             remaining = OTP_MAX_ATTEMPTS - entry["attempts"]
             return {
                 "error": f"Invalid code. Please try again. {remaining} attempt(s) remaining."
