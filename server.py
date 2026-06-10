@@ -418,7 +418,7 @@ def get_product_details(names: list) -> dict:
 
 @mcp.tool()
 def get_orders(page: int = 1, partner_id: Optional[int] = None) -> dict:
-    """Get sale orders for the customer. partner_id is auto-injected, always pass null.
+    """Get sale orders for the customer. partner_id is auto-injected, always pass null. Authentication required.
     The response may not contain all the customer's orders — check the `pagination` object in the response for next steps.
 
     Args:
@@ -507,7 +507,7 @@ def get_orders(page: int = 1, partner_id: Optional[int] = None) -> dict:
 
 @mcp.tool()
 def create_order(product_lines: list, partner_id: Optional[int] = None) -> dict:
-    """Create a sale order. partner_id is auto-injected, always pass null.
+    """Create a sale order. partner_id is auto-injected, always pass null. Authentication required.
 
     Args:
         product_lines: List of {product_name: str, quantity: float}.
@@ -585,7 +585,7 @@ def create_order(product_lines: list, partner_id: Optional[int] = None) -> dict:
 
 @mcp.tool()
 def update_order(order_name: str, product_lines: list, partner_id: Optional[int] = None) -> dict:
-    """Add new product lines to an existing draft sale order. Only adds lines — does not modify quantities of existing lines and does not remove lines. The order must be in 'draft' state; confirmed, sent, or cancelled orders cannot be modified. partner_id is auto-injected, always pass null.
+    """Add new product lines to an existing draft sale order. Only adds lines — does not modify quantities of existing lines and does not remove lines. The order must be in 'draft' state; confirmed, sent, or cancelled orders cannot be modified. partner_id is auto-injected, always pass null. Authentication required.
 
     Args:
         order_name: Order reference e.g. 'S00001'.
@@ -671,7 +671,7 @@ def update_order(order_name: str, product_lines: list, partner_id: Optional[int]
 
 @mcp.tool()
 def confirm_order(order_name: str, partner_id: Optional[int] = None) -> dict:
-    """Confirm a sale order (draft → sale). partner_id is auto-injected, always pass null.
+    """Confirm a sale order (draft → sale). partner_id is auto-injected, always pass null. Authentication required.
 
     Args:
         order_name: Order reference e.g. 'S00001'.
@@ -713,7 +713,7 @@ def confirm_order(order_name: str, partner_id: Optional[int] = None) -> dict:
 
 @mcp.tool()
 def cancel_order(order_name: str, partner_id: Optional[int] = None) -> dict:
-    """Cancel a sale order. partner_id is auto-injected, always pass null.
+    """Cancel a sale order. partner_id is auto-injected, always pass null. Authentication required.
 
     Args:
         order_name: Order reference e.g. 'S00001'.
@@ -760,7 +760,7 @@ def cancel_order(order_name: str, partner_id: Optional[int] = None) -> dict:
 
 @mcp.tool()
 def get_order_details(order_names: list, partner_id: Optional[int] = None) -> dict:
-    """Get full details with line items for one or more orders in a single call. partner_id is auto-injected, always pass null.
+    """Get full details with line items for one or more orders in a single call. partner_id is auto-injected, always pass null. Authentication required.
 
     Args:
         order_names: List of order references e.g. ['S00001', 'S00002'].
@@ -820,7 +820,7 @@ def get_order_details(order_names: list, partner_id: Optional[int] = None) -> di
 
 @mcp.tool()
 def get_my_profile(partner_id: Optional[int] = None) -> dict:
-    """Use this tool when the user ask for his personal information to get his profile (name, email, phone, address). partner_id is auto-injected, always pass null."""
+    """Use this tool when the user ask for his personal information to get his profile (name, email, phone, address). partner_id is auto-injected, always pass null. Authentication required."""
     if partner_id is None:
         return {
             "error": True,
@@ -844,7 +844,7 @@ def get_my_profile(partner_id: Optional[int] = None) -> dict:
 
 @mcp.tool()
 def get_invoices(partner_id: Optional[int] = None) -> dict:
-    """Get all invoices for the customer. partner_id is auto-injected, always pass null."""
+    """Get all invoices for the customer. partner_id is auto-injected, always pass null. Authentication required."""
     if partner_id is None:
         return {
             "error": True,
@@ -871,7 +871,7 @@ def get_invoices(partner_id: Optional[int] = None) -> dict:
 
 @mcp.tool()
 def get_invoice_details(invoice_name: str, partner_id: Optional[int] = None) -> dict:
-    """Get invoice details with line items. partner_id is auto-injected, always pass null.
+    """Get invoice details with line items. partner_id is auto-injected, always pass null. Authentication required.
 
     Args:
         invoice_name: Invoice reference e.g. 'INV/2024/00001'.
@@ -919,7 +919,7 @@ def get_invoice_details(invoice_name: str, partner_id: Optional[int] = None) -> 
 
 @mcp.tool()
 def get_unpaid_invoices(partner_id: Optional[int] = None) -> dict:
-    """Get unpaid/partially paid invoices. partner_id is auto-injected, always pass null."""
+    """Get unpaid/partially paid invoices. partner_id is auto-injected, always pass null. Authentication required."""
     if partner_id is None:
         return {
             "error": True,
