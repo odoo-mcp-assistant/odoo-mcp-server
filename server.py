@@ -339,6 +339,12 @@ def get_product_details(names: list) -> dict:
         for p in products:
             path = p.pop("website_url", "") or ""
             p["url"] = f"{base_url}{path}" if path else None
+            # Public image URL built from the record id (Odoo's /web/image route
+            # serves a placeholder if the product has no photo, so it never 404s).
+            # We build the URL from the id only — never search_read the image
+            # field itself, which would return a huge base64 blob and bloat the
+            # payload + LLM token cost.
+            p["image_url"] = f"{base_url}/web/image/product.template/{p['id']}/image_512"
             raw_desc = p.get("description_ecommerce") or ""
             if raw_desc:
                 plain = _re.sub(r"<br\s*/?>", "\n", raw_desc, flags=_re.IGNORECASE)
@@ -401,7 +407,10 @@ def get_product_details(names: list) -> dict:
             "products": results,
             "presentation_instruction": (
                 "When mentioning any product from this result, render its `url` "
-                "as a markdown link so the user can open the product page directly."
+                "as a markdown link so the user can open the product page directly. "
+                "Also show its photo by embedding `image_url` as a markdown image: "
+                "![<product name>](<image_url>). Put the image right after the "
+                "product name. Use the URLs exactly as given — do not alter them."
             ),
         }
         if not_found:
